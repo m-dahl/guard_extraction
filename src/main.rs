@@ -848,7 +848,184 @@ fn bdd_nonblocking_controllable() {
     assert!(false);
 }
 
+fn iffs(vs: &[u32], offset: usize) -> Expr<u32> {
+    vs.iter().fold(Expr::Const(true), |acc, i|
+                   Expr::and(acc, iff(Expr::Terminal(*i as u32),
+                                      Expr::Terminal(*i + offset as u32))))
+}
 
+#[test]
+fn bdd_door_lock() {
+
+    // set up variables
+
+    let vars = vec![0,  // door_closed_m
+                    1,  // door_opened_m
+                    2,  // door_gs_c, false = closed, true = opened
+
+                    3,  // lock_l_c
+                    4,  // lock_u_c
+                    5,  // lock_e
+                    6,  // lock_e_unknown = true
+    ];
+
+    let destvars: Vec<_> = vars.iter().map(|i| i + vars.len() as u32).collect();
+    let temps: Vec<_> = vars.iter().map(|i| i + 2*vars.len() as u32).collect();
+
+    let pairing: Vec<_> = vars.iter().zip(destvars.iter()).map(|(x,y)|(*x,*y)).collect();
+
+    println!("{:?}", vars);
+    println!("{:?}", destvars);
+    println!("{:?}", temps);
+
+    // convenience
+    let x    = |n| Expr::Terminal(n) ;
+    let next = |n| Expr::Terminal(n + vars.len() as u32) ;
+    let and  = |a,b| Expr::and(a,b) ;
+    let or   = |a,b| Expr::or(a,b) ;
+    let not  = |a| Expr::not(a) ;
+
+    // set up transitions
+    let door_open_d = and( and(not(x(1)), next(2)) ,
+                           iffs(&[0, 1, 3, 4, 5, 6], vars.len()));
+    let door_open_e = and( and(x(2), and(not(x(1)), and(next(1), not(next(0))))),
+                           iffs(&[2,3,4,5,6], vars.len()));
+
+    let door_close_d = and( and(not(x(0)), not(next(2))),
+                            iffs(&[0, 1, 3, 4, 5, 6], vars.len()));
+    let door_close_e = and( and(not(x(2)), and(not(x(0)), and(not(next(1)), next(0)))),
+                            iffs(&[2, 3, 4, 5, 6], vars.len()));
+
+    let lock_d = and( and( or(x(6), not(x(5))), and(next(3), and(not(next(4)), and(next(5), not(next(6)))))),
+                      iffs(&[0, 1, 2], vars.len()) );
+
+    let unlock_d = and( and(or(x(6), x(5)), and(not(next(3)), and(next(4), and(not(next(5)), not(next(6)))))),
+                        iffs(&[0, 1, 2], vars.len()) );
+
+    let mut b: BDD<u32> = BDD::new();
+    let is = [true, false, false, false, false, false, true];
+    let ise = state_to_expr(&is);
+
+    // forbid opening
+    let forbidden = and(not(x(1)), and(x(2), x(5)));
+    let forbidden = b.from_expr(&forbidden);
+
+    // let forbidden = BDD_ZERO; // no forbidden states //b.from_expr(&state3e);
+
+    let ft1 = b.from_expr(&door_open_d);
+    let ft2 = b.from_expr(&door_open_e);
+    let ft3 = b.from_expr(&door_close_d);
+    let ft4 = b.from_expr(&door_close_e);
+    let ft5 = b.from_expr(&lock_d);
+    let ft6 = b.from_expr(&unlock_d);
+
+    let ft = b.or(ft1, ft2);
+    let ft = b.or(ft, ft3);
+    let ft = b.or(ft, ft4);
+    let ft = b.or(ft, ft5);
+    let ft = b.or(ft, ft6);
+
+    let uc = b.or(ft2, ft4); // BDD_ZERO
+    let ub = swap(&mut b, uc, &pairing, &temps); // uncontrollable backwards
+
+    // backwards transitions
+    let bt = swap(&mut b, ft, &pairing, &temps);
+
+
+    let fi = b.from_expr(&ise);
+
+
+    // find all reachable states
+    let mut r = fi;
+    loop {
+        let old = r;
+        let new = relprod(&mut b, old, ft, &vars); // possible trans
+        let new = replace(&mut b, new, &pairing);  // to source states
+        r = b.or(old, new);
+
+        if old == r {
+            break;
+        }
+    }
+
+    println!("All reachable states");
+    println!("============================");
+    let mut bitmap = HashMap::new();
+    for i in 0..128 {
+        bits_to_hashmap(7, i, &mut bitmap);
+        if b.evaluate(r, &mut bitmap) {
+            let m: BTreeMap<_,_> = bitmap.iter().collect();
+            println!("i: {} - {:?}", i, m);
+        }
+    }
+
+    println!("\n");
+
+
+
+    let mark = [true, false, false, false, false, false, false];
+    let mark = state_to_expr(&mark);
+    let mark = b.from_expr(&mark);
+
+    let not_forbidden = b.not(forbidden);
+    let marked = b.or(fi,mark); // fi; // b.or(fi, state2b); // marked is only initial
+    let marked = BDD_ONE; // all states marked...
+    let mut nonblock = b.and(marked, not_forbidden);
+
+    loop {
+
+        let old = nonblock;
+        let new = relprod(&mut b, old, bt, &vars); // possible trans
+        let new = replace(&mut b, new, &pairing);  // to source states
+        nonblock = b.or(old, new);
+        nonblock = b.and(nonblock, not_forbidden);
+
+        // controllability
+        let mut rfu = b.not(nonblock); // forbidden;
+        loop {
+            let old = rfu;
+            let new = relprod(&mut b, old, ub, &vars); // possible trans
+            let new = replace(&mut b, new, &pairing);  // to source states
+            rfu = b.or(old, new);
+
+            if old == rfu {
+                break;
+            }
+        }
+
+        rfu = b.not(rfu);
+        nonblock = b.or(rfu, old);
+
+        // cleanup...
+        // TODO. this should not be not needed
+        nonblock = b.and(nonblock, r);
+
+        if old == nonblock {
+            break;
+        }
+
+    }
+
+
+
+
+    println!("Reachable nonblocking states");
+    println!("============================");
+    let mut bitmap = HashMap::new();
+    for i in 0..128 {
+        bits_to_hashmap(7, i, &mut bitmap);
+        if b.evaluate(nonblock, &mut bitmap) {
+            let m: BTreeMap<_,_> = bitmap.iter().collect();
+            println!("i: {} - {:?}", i, m);
+        }
+    }
+
+    println!("\n");
+
+
+    assert!(false);
+
+}
 
 fn main() {
     println!("Hello, world!");
