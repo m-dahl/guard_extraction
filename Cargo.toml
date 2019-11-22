@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 boolean_expression = { path="../boolean_expression" }
+itertools = "0.8.1"

@@ -69,6 +69,75 @@ use std::fmt::Debug;
 use std::cmp::Ord;
 use std::hash::Hash;
 
+
+pub fn terms_in_expr<T>(e: &Expr<T>) -> Vec<T>
+where T: Clone + Debug + Eq + Ord + Hash
+{
+    let mut v = Vec::new();
+    match e {
+        &Expr::Terminal(ref t) => v.push(t.clone()),
+        &Expr::Const(_val) => {},
+        &Expr::Not(ref x) => {
+            let mut nv = terms_in_expr(&**x);
+            v.append(&mut nv);
+        }
+        &Expr::And(ref a, ref b) => {
+            let mut nv1 = terms_in_expr(&**a);
+            let mut nv2 = terms_in_expr(&**b);
+            v.append(&mut nv1);
+            v.append(&mut nv2);
+        }
+        &Expr::Or(ref a, ref b) => {
+            let mut nv1 = terms_in_expr(&**a);
+            let mut nv2 = terms_in_expr(&**b);
+            v.append(&mut nv1);
+            v.append(&mut nv2);
+        }
+    }
+    v
+}
+
+// collect toplevel ORs
+pub fn disj<T>(e: &Expr<T>) -> Vec<Expr<T>>
+where T: Clone + Debug + Eq + Ord + Hash
+{
+    let mut v = Vec::new();
+    match e {
+        &Expr::Or(ref a, ref b) => {
+            let mut nv1 = disj(&**a);
+            let mut nv2 = disj(&**b);
+            v.append(&mut nv1);
+            v.append(&mut nv2);
+        }
+        _ => {
+            v.push(e.clone());
+        }
+    }
+    v
+}
+
+#[test]
+fn disj_test() {
+    let x: Expr<u32> = Expr::or(Expr::and(Expr::Const(true), Expr::Const(false)), Expr::or(Expr::Const(true),Expr::Const(false)));
+    let y = disj(&x);
+    println!("{:?}", y);
+
+
+    use itertools::Itertools;
+    let mut disj2 = Vec::new();
+    for x in 1..(y.len()+1) {
+        for z in y.iter().combinations(x) {
+            println!("comb: {:?}", z);
+            disj2.push(z);
+        }
+    }
+
+    println!("{:?}", disj2);
+
+    assert!(false);
+}
+
+
 fn iff<T>(a: Expr<T>, b: Expr<T>) -> Expr<T>
 where T: Clone + Debug + Eq + Ord + Hash
 {
@@ -886,24 +955,50 @@ fn bdd_door_lock() {
     let not  = |a| Expr::not(a) ;
 
     // set up transitions
-    let door_open_d = and( and(not(x(1)), next(2)) ,
-                           iffs(&[0, 1, 3, 4, 5, 6], vars.len()));
-    let door_open_e = and( and(x(2), and(not(x(1)), and(next(1), not(next(0))))),
-                           iffs(&[2,3,4,5,6], vars.len()));
+    let door_open_d = ("door_open_d",
+                       and( and(not(x(1)), next(2)) ,
+                            iffs(&[0, 1, 3, 4, 5, 6], vars.len()))
+    );
 
-    let door_close_d = and( and(not(x(0)), not(next(2))),
-                            iffs(&[0, 1, 3, 4, 5, 6], vars.len()));
-    let door_close_e = and( and(not(x(2)), and(not(x(0)), and(not(next(1)), next(0)))),
-                            iffs(&[2, 3, 4, 5, 6], vars.len()));
+    let door_open_e = ("door_open_e",
+                       and( and(x(2), and(not(x(1)), and(next(1), not(next(0))))),
+                            iffs(&[2,3,4,5,6], vars.len()))
+    );
 
-    let lock_d = and( and( or(x(6), not(x(5))), and(next(3), and(not(next(4)), and(next(5), not(next(6)))))),
-                      iffs(&[0, 1, 2], vars.len()) );
+    let door_close_d = ("door_close_d",
+                        and( and(not(x(0)), not(next(2))),
+                             iffs(&[0, 1, 3, 4, 5, 6], vars.len()))
+    );
 
-    let unlock_d = and( and(or(x(6), x(5)), and(not(next(3)), and(next(4), and(not(next(5)), not(next(6)))))),
-                        iffs(&[0, 1, 2], vars.len()) );
+    let door_close_e = ("door_close_e",
+                        and( and(not(x(2)), and(not(x(0)), and(not(next(1)), next(0)))),
+                             iffs(&[2, 3, 4, 5, 6], vars.len()))
+    );
+
+    let lock_lock_d = ("lock_lock_d",
+                       and( and( or(x(6), not(x(5))), and(next(3), and(not(next(4)), and(next(5), not(next(6)))))),
+                            iffs(&[0, 1, 2], vars.len()) )
+    );
+
+    let lock_unlock_d = ("lock_unlock_d",
+                         and( and(or(x(6), x(5)), and(not(next(3)), and(next(4), and(not(next(5)), not(next(6)))))),
+                              iffs(&[0, 1, 2], vars.len()))
+    );
+
+    let mut transitions = HashMap::new();
+    transitions.insert(door_open_d.0, door_open_d.1);
+    transitions.insert(door_open_e.0, door_open_e.1.clone()); // todo
+    transitions.insert(door_close_d.0, door_close_d.1);
+    transitions.insert(door_close_e.0, door_close_e.1.clone());
+    transitions.insert(lock_lock_d.0, lock_lock_d.1);
+    transitions.insert(lock_unlock_d.0, lock_unlock_d.1);
+
+    let mut uc_transitions = HashMap::new();
+    uc_transitions.insert(door_open_e.0, door_open_e.1);
+    uc_transitions.insert(door_close_e.0, door_close_e.1);
 
     let mut b: BDD<u32> = BDD::new();
-    let is = [true, false, false, false, false, false, true];
+    let is = [false, false, false, false, false, false, true];
     let ise = state_to_expr(&is);
 
     // forbid opening
@@ -912,20 +1007,19 @@ fn bdd_door_lock() {
 
     // let forbidden = BDD_ZERO; // no forbidden states //b.from_expr(&state3e);
 
-    let ft1 = b.from_expr(&door_open_d);
-    let ft2 = b.from_expr(&door_open_e);
-    let ft3 = b.from_expr(&door_close_d);
-    let ft4 = b.from_expr(&door_close_e);
-    let ft5 = b.from_expr(&lock_d);
-    let ft6 = b.from_expr(&unlock_d);
+    let mut ft = BDD_ZERO;
+    for t in transitions.values() {
+        let f = b.from_expr(t);
+        ft = b.or(ft, f);
+    }
 
-    let ft = b.or(ft1, ft2);
-    let ft = b.or(ft, ft3);
-    let ft = b.or(ft, ft4);
-    let ft = b.or(ft, ft5);
-    let ft = b.or(ft, ft6);
+    let mut uc = BDD_ZERO;
+    for t in uc_transitions.values() {
+        let f = b.from_expr(t);
+        uc = b.or(uc, f);
+    }
 
-    let uc = b.or(ft2, ft4); // BDD_ZERO
+    // let uc = b.or(ft2, ft4); // BDD_ZERO
     let ub = swap(&mut b, uc, &pairing, &temps); // uncontrollable backwards
 
     // backwards transitions
@@ -1022,6 +1116,166 @@ fn bdd_door_lock() {
 
     println!("\n");
 
+
+    println!("Forbidden (reachable) states");
+    println!("============================");
+    let notnonblock = b.not(nonblock);
+    let forbidden = b.and(r, notnonblock);
+    let mut bitmap = HashMap::new();
+    for i in 0..128 {
+        bits_to_hashmap(7, i, &mut bitmap);
+        if b.evaluate(forbidden, &mut bitmap) {
+            let m: BTreeMap<_,_> = bitmap.iter().collect();
+            println!("i: {} - {:?}", i, m);
+        }
+    }
+
+    println!("\n");
+
+
+    // find guards...
+    for (name, t) in transitions {
+        // println!("transition? {:?}", t);
+        let f = b.from_expr(&t);
+        let f_orig = f;
+        let bt = swap(&mut b, f, &pairing, &temps);
+        let x = relprod(&mut b, nonblock, bt, &vars);
+        let x = replace(&mut b, x, &pairing);
+
+        // x is new guard. use it and compare with original trans
+        let xf = b.and(f, x);
+        let y = relprod(&mut b, r, f, &vars);
+        let z = relprod(&mut b, r, xf, &vars);
+
+        if y != z {
+            // quanity out target states from trans to get guard
+            let mut f = f;
+            for v in &destvars {
+                let sf = b.restrict(f, *v, false);
+                let st = b.restrict(f, *v, true);
+                f = b.or(sf, st);
+            }
+
+
+
+
+            let forbx = relprod(&mut b, forbidden, bt, &vars);
+            let mut forbx = replace(&mut b, forbx, &pairing);
+
+            let fe = b.to_expr(f);
+            let tie = terms_in_expr(&fe);
+            // now hack f out of x
+            let mut xx = x;
+            for t in tie {
+                let sf = b.restrict(xx, t, false);
+                let st = b.restrict(xx, t, true);
+                xx = b.or(sf, st);
+
+                let sf = b.restrict(forbx, t, false);
+                let st = b.restrict(forbx, t, true);
+                forbx = b.or(sf, st);
+            }
+            // assert that my thinking is correct...
+            let tot = b.and(xx, f);
+            assert_eq!(tot, x);
+
+
+            // guard need to stop us from reaching forbidden
+            forbx = b.not(forbx);
+            let forbe = b.to_expr(forbx);
+
+            let f_and_forb = b.and(f_orig, forbx);
+            let bt = swap(&mut b, f_and_forb, &pairing, &temps);
+            // assert that my thinking is correct...
+            assert_eq!(relprod(&mut b, forbidden, bt, &vars), BDD_ZERO);
+
+
+            let fe = b.to_expr(f);
+            let e = b.to_expr(xx);
+
+            let tie_x = terms_in_expr(&e);
+            let tie_y = terms_in_expr(&forbe);
+
+            // chose the smallest guard representation
+            let mut new_guard = if tie_x.len() < tie_y.len() {
+                e
+            } else {
+                forbe
+            };
+
+
+            // try to remove terms that doesnt lead us to a forbidden state
+            // and doesn't over-constrain us wrt the reachable states
+
+            let mut first = None;
+            let mut disj = disj(&new_guard);
+            let temp_ng = b.from_expr(&new_guard);
+            let temp = b.and(f_orig, temp_ng);
+            let bt = swap(&mut b, temp, &pairing, &temps);
+            let z = relprod(&mut b, nonblock, bt, &vars);
+
+            disj.push(Expr::Const(true));
+
+            for d in disj {
+                let temp = b.from_expr(&d);
+                let temp = b.and(f_orig, temp);
+                let bt = swap(&mut b, temp, &pairing, &temps);
+                let y = relprod(&mut b, forbidden, bt, &vars);
+                let zz = relprod(&mut b, nonblock, bt, &vars);
+
+                if y == BDD_ZERO && z == zz {
+                    // yay, we can eliminate the term
+                    println!("yay!: {:?}", d);
+                    first = Some(d);
+                } else {
+                    // noh!
+                    println!("no luck for: {:?}", d);
+                }
+            }
+
+            // let mut ng = b.from_expr(&new_guard);
+            // let terms = terms_in_expr(&new_guard);
+
+            // for term in &terms {
+
+
+            //     let temp = ng; // b.and(f_orig, ng);
+            //     let sf = b.restrict(temp, *term, false);
+            //     let st = b.restrict(temp, *term, true);
+            //     let temp = b.or(sf, st);
+            //     println!("gg {:?}", b.to_expr(temp));
+            //     let bt = swap(&mut b, temp, &pairing, &temps);
+            //     let y = relprod(&mut b, forbidden, bt, &vars);
+            //     // let y = replace(&mut b, y, &pairing);
+
+            //     if y == BDD_ZERO {
+            //         // yay, we can eliminate the term
+            //         println!("yay!: {}", term);
+            //         // println!("transition {:?}", b.to_expr(temp));
+            //         // ng = temp;
+            //     } else {
+            //         // noh!
+            //         println!("no luck for: {}", term);
+            //         // println!("resulting state {:?}", b.to_expr(y));
+            //         // println!("transition {:?}", b.to_expr(temp));
+
+
+            //     }
+            // }
+            // let mut new_guard = b.to_expr(ng);
+
+            if let Some(x) = first {
+                new_guard = x;
+            }
+
+            // new guard!
+            println!("guard added for transition {}", name);
+            println!("orig guard: {:?}", fe);
+            println!("new guard: {:#?}", new_guard);
+            println!("");
+        }
+
+    }
 
     assert!(false);
 
