@@ -116,12 +116,35 @@ where T: Clone + Debug + Eq + Ord + Hash
     v
 }
 
+pub fn disj_powerset<T>(e: &Expr<T>) -> Vec<Expr<T>>
+where T: Clone + Debug + Eq + Ord + Hash
+{
+    use itertools::Itertools;
+    let disj = disj(e);
+    let mut disj2 = Vec::new();
+    for x in 1..(disj.len()+1) {
+        for z in disj.iter().combinations(x) {
+            if z.len() == 1 {
+                disj2.push(z[0].clone());
+            } else {
+                let first = z[0].clone();
+                let rest = &z[1..z.len()];
+                let v: Expr<T> = rest.iter().fold(first, |acc, &t| Expr::or(acc, t.clone()));
+                disj2.push(v);
+            }
+        }
+    }
+
+    disj2
+}
+
+
+
 #[test]
 fn disj_test() {
     let x: Expr<u32> = Expr::or(Expr::and(Expr::Const(true), Expr::Const(false)), Expr::or(Expr::Const(true),Expr::Const(false)));
     let y = disj(&x);
     println!("{:?}", y);
-
 
     use itertools::Itertools;
     let mut disj2 = Vec::new();
@@ -133,6 +156,8 @@ fn disj_test() {
     }
 
     println!("{:?}", disj2);
+
+    println!("powerset {:#?}", disj_powerset(&x));
 
     assert!(false);
 }
@@ -1233,6 +1258,26 @@ fn bdd_door_lock() {
                 }
             }
 
+
+            let disj_exprs = disj_powerset(&new_guard);
+            let ok_exprs: Vec<_> = disj_exprs.iter().filter(|e| {
+                let temp = b.from_expr(&e);
+                let temp = b.and(f_orig, temp);
+                let bt = swap(&mut b, temp, &pairing, &temps);
+                let y = relprod(&mut b, forbidden, bt, &vars);
+                let zz = relprod(&mut b, nonblock, bt, &vars);
+
+                y == BDD_ZERO && z == zz
+            }).collect();
+            println!("ALL OK: {:?}", ok_exprs);
+            let lens: Vec<_> = ok_exprs.iter().map(|x|terms_in_expr(x).len()).collect();
+            println!("TERM LENS: {:?}", lens);
+
+
+            let least_terminals = ok_exprs.into_iter().min_by(|x, y| {
+                terms_in_expr(&x).len().cmp(&terms_in_expr(&y).len())
+            });
+
             // let mut ng = b.from_expr(&new_guard);
             // let terms = terms_in_expr(&new_guard);
 
@@ -1264,8 +1309,9 @@ fn bdd_door_lock() {
             // }
             // let mut new_guard = b.to_expr(ng);
 
-            if let Some(x) = first {
-                new_guard = x;
+            if let Some(x) = least_terminals {
+            // if let Some(x) = first {
+                new_guard = x.clone();
             }
 
             // new guard!
