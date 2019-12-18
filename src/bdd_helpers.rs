@@ -35,7 +35,7 @@ where
     f
 }
 
-pub fn replace<T>(b: &mut BDD<T>, func: BDDFunc, pairing: &[(T, T)]) -> BDDFunc
+pub fn replace2<T>(b: &mut BDD<T>, func: BDDFunc, pairing: &[(T, T)]) -> BDDFunc
 where
     T: Clone + Debug + Eq + Ord + Hash + Copy,
 {
@@ -61,6 +61,14 @@ where
     f // now we have "s"
 }
 
+pub fn replace<T>(b: &mut BDD<T>, func: BDDFunc, pairing: &[(T, T)]) -> BDDFunc
+where
+    T: Clone + Debug + Eq + Ord + Hash + Copy,
+{
+    let reverse_pair: Vec<_> = pairing.iter().map(|(a,b)|(*b,*a)).collect();
+    b.subst(func, &reverse_pair)
+}
+
 // swap using temporary terminals
 pub fn swap<T>(b: &mut BDD<T>, func: BDDFunc, pairing: &[(T, T)], temps: &[T]) -> BDDFunc
 where
@@ -81,6 +89,28 @@ where
     let nf = replace(b, func, &pair1);
     let nf = replace(b, nf, pairing);
     replace(b, nf, &pair2)
+}
+
+// swap using temporary terminals
+pub fn swap2<T>(b: &mut BDD<T>, func: BDDFunc, pairing: &[(T, T)], temps: &[T]) -> BDDFunc
+where
+    T: Clone + Debug + Eq + Ord + Hash + Copy,
+{
+    let pair1: Vec<_> = pairing
+        .iter()
+        .zip(temps.iter())
+        .map(|((x, _y), z)| (*z, *x))
+        .collect();
+
+    let pair2: Vec<_> = pairing
+        .iter()
+        .zip(temps.iter())
+        .map(|((_x, y), z)| (*y, *z))
+        .collect();
+
+    let nf = replace2(b, func, &pair1);
+    let nf = replace2(b, nf, pairing);
+    replace2(b, nf, &pair2)
 }
 
 pub fn state_to_expr(state: &[bool]) -> Expr<u32> {
