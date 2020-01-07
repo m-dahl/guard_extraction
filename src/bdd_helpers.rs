@@ -227,7 +227,34 @@ impl BDDDomain {
         }
         res
     }
+
+    pub fn domain_bdd(&self) -> BDDFunc {
+        self.dom
+    }
 }
+
+
+fn raw(bdd: &mut BDD<usize>, f: BDDFunc) {
+    if f == BDD_ZERO {
+        println!("input: ZERO");
+    }
+    else if f == BDD_ONE {
+        println!("input: ONE");
+    } else {
+        println!("input: {:?}", f);
+    }
+
+    if f == BDD_ZERO || f == BDD_ONE {
+        println!("done");
+        return;
+    }
+    let node = bdd.node(f);
+    println!("node: {:?}", node);
+
+    raw(bdd, node.lo);
+    raw(bdd, node.hi);
+}
+
 
 #[test]
 fn test_domain2() {
@@ -244,7 +271,53 @@ fn test_domain2() {
 
     // let x = Expr::and(Expr::not(Expr::Terminal(0)), Expr::and(
     //     Expr::Terminal(1), Expr::not(Expr::Terminal(2))));
-    let x = Expr::not(Expr::Terminal(5));
+    let x = Expr::and(Expr::not(Expr::Terminal(5)), Expr::and(
+         Expr::Terminal(6), Expr::not(Expr::Terminal(7))));
+    // let x = Expr::not(Expr::Terminal(5));
+
+    let x = b.from_expr(&x);
+    let xn = b.not(x);
+
+
+    let y1 = b.from_expr(&Expr::not(Expr::Terminal(0)));
+    let y2 = b.from_expr(&Expr::not(Expr::Terminal(1)));
+
+    let x1 = b.and(x,y1);
+    let x2 = b.and(xn,y2);
+
+    let x = b.or(x1,x2);
+
+
+    let allowed = d.allowed_values(&mut b, x);
+    let allowed: Vec<_> = allowed.iter().map(|a| domain[*a].clone()).collect();
+    println!("variable can take on: {:#?}", allowed);
+
+    let expr = b.to_expr(x);
+    println!("FULL: {:?}", expr);
+    b.raw(x);
+
+    let n = b.node(x);
+    println!("NODE: {:?}", n);
+
+
+
+    assert!(false);
+}
+
+#[test]
+fn test_boolean_domain() {
+    let domain: Vec<String> = vec![
+        "off".into(),
+        "on".into(),
+    ];
+
+    let mut b = BDD::new();
+    let d = BDDDomain::new(&mut b, domain.len(), 5);
+
+    // let x = Expr::and(Expr::not(Expr::Terminal(0)), Expr::and(
+    //     Expr::Terminal(1), Expr::not(Expr::Terminal(2))));
+    // let x = Expr::not(Expr::Terminal(5));
+    let x = Expr::and(Expr::not(Expr::Terminal(0)), Expr::not(Expr::Terminal(5)));
 
     let x = b.from_expr(&x);
 

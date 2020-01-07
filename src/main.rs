@@ -383,6 +383,31 @@ fn test_make_trans() {
 }
 
 #[test]
+fn test_set_minus() {
+    let mut bdd = BDD::new();
+    // Test: a, a+b, a+c, c', c, bd, ad, d'
+    let a = bdd.terminal(0);
+    let b = bdd.terminal(1);
+    let c = bdd.terminal(2);
+    let d = bdd.terminal(3);
+
+    let ab = bdd.or(a,b);
+    let abc = bdd.or(ab,c);
+    let abcd = bdd.or(abc,d);
+
+
+    let cd = bdd.or(c,d);
+
+    let minus = bdd.set_minus(abcd, d);
+
+    let expr = bdd.to_expr(minus);
+
+    println!("expr: {:#?}", expr);
+
+    assert!(false);
+}
+
+#[test]
 fn new_swap_test_make_trans() {
     let vars = vec![
         0, // door_closed_m
@@ -441,7 +466,7 @@ fn new_swap_test_make_trans() {
     let rorig = r;
     let r = replace(&mut b, rorig, &pairing);
     let r2 = replace2(&mut b, rorig, &pairing);
-//    assert_eq!(r,r2);
+    assert_eq!(r,r2);
     println!("r: {}, r2 {}", r, r2);
     let re = b.to_expr(r);
     let re2 = b.to_expr(r2);
