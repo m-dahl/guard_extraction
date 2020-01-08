@@ -1,16 +1,12 @@
 use boolean_expression::*;
 use Expr;
-use std::collections::BTreeMap;
-use std::collections::HashMap;
+use itertools::Itertools;
 use std::cmp::Ord;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::ops::Add;
 
-pub fn relprod<T>(b: &mut BDD<T>, states: BDDFunc, transitions: BDDFunc, variables: &[T]) -> BDDFunc
-where
-    T: Clone + Debug + Eq + Ord + Hash + Copy,
-{
+pub fn relprod(b: &mut BDD, states: BDDFunc, transitions: BDDFunc, variables: &[BDDLabel]) -> BDDFunc {
     let mut f = b.and(states, transitions);
 
     for v in variables {
@@ -22,10 +18,7 @@ where
     f
 }
 
-pub fn exist<T>(b: &mut BDD<T>, mut f: BDDFunc, variables: &[T]) -> BDDFunc
-where
-    T: Clone + Debug + Eq + Ord + Hash + Copy,
-{
+pub fn exist(b: &mut BDD, mut f: BDDFunc, variables: &[BDDLabel]) -> BDDFunc {
     for v in variables {
         let sf = b.restrict(f, *v, false);
         let st = b.restrict(f, *v, true);
@@ -35,10 +28,7 @@ where
     f
 }
 
-pub fn replace2<T>(b: &mut BDD<T>, func: BDDFunc, pairing: &[(T, T)]) -> BDDFunc
-where
-    T: Clone + Debug + Eq + Ord + Hash + Copy,
-{
+pub fn replace2(b: &mut BDD, func: BDDFunc, pairing: &[(BDDLabel, BDDLabel)]) -> BDDFunc {
     let mut f = func;
     for (s, t) in pairing {
         // set s to t
@@ -61,19 +51,13 @@ where
     f // now we have "s"
 }
 
-pub fn replace<T>(b: &mut BDD<T>, func: BDDFunc, pairing: &[(T, T)]) -> BDDFunc
-where
-    T: Clone + Debug + Eq + Ord + Hash + Copy,
-{
+pub fn replace(b: &mut BDD, func: BDDFunc, pairing: &[(BDDLabel, BDDLabel)]) -> BDDFunc {
     let reverse_pair: Vec<_> = pairing.iter().map(|(a,b)|(*b,*a)).collect();
     b.subst(func, &reverse_pair)
 }
 
 // swap using temporary terminals
-pub fn swap<T>(b: &mut BDD<T>, func: BDDFunc, pairing: &[(T, T)], temps: &[T]) -> BDDFunc
-where
-    T: Clone + Debug + Eq + Ord + Hash + Copy,
-{
+pub fn swap(b: &mut BDD, func: BDDFunc, pairing: &[(BDDLabel, BDDLabel)], temps: &[BDDLabel]) -> BDDFunc {
     let pair1: Vec<_> = pairing
         .iter()
         .zip(temps.iter())
@@ -92,10 +76,7 @@ where
 }
 
 // swap using temporary terminals
-pub fn swap2<T>(b: &mut BDD<T>, func: BDDFunc, pairing: &[(T, T)], temps: &[T]) -> BDDFunc
-where
-    T: Clone + Debug + Eq + Ord + Hash + Copy,
-{
+pub fn swap2(b: &mut BDD, func: BDDFunc, pairing: &[(BDDLabel, BDDLabel)], temps: &[BDDLabel]) -> BDDFunc {
     let pair1: Vec<_> = pairing
         .iter()
         .zip(temps.iter())
@@ -142,31 +123,23 @@ where
         })
 }
 
-pub fn state_in_bddfunc(bdd: &BDD<u32>, f: BDDFunc, state: &[bool]) -> bool {
-    let mut h = HashMap::new();
-    for (i, v) in state.iter().enumerate() {
-        h.insert(i as u32, *v);
-    }
-    bdd.evaluate(f, &h)
+pub fn state_in_bddfunc(bdd: &BDD, f: BDDFunc, state: &[bool]) -> bool {
+    bdd.evaluate(f, state).unwrap()
 }
 
-fn eval_bddfunc(bdd: &BDD<usize>, f: BDDFunc, state: &[bool]) -> bool {
-    let mut h = HashMap::new();
-    for (i, v) in state.iter().enumerate() {
-        h.insert(i as usize, *v);
-    }
-    bdd.evaluate(f, &h)
+fn eval_bddfunc(bdd: &BDD, f: BDDFunc, state: &[bool]) -> bool {
+    bdd.evaluate(f, state).unwrap()
 }
 
 struct BDDDomain {
-    size: usize,
-    binsize: usize,
-    offset: usize, // where does the block start in the number of variables
-    dom: BDDFunc,
+    pub size: usize,
+    pub binsize: usize,
+    pub offset: usize, // where does the block start in the number of variables
+    pub dom: BDDFunc,
 }
 
 impl BDDDomain {
-    pub fn new(b: &mut BDD<usize>, size: usize, offset: usize) -> Self {
+    pub fn new(b: &mut BDD, size: usize, offset: usize) -> Self {
         let mut binsize = 1;
         let mut calcsize = 2;
 
@@ -199,8 +172,12 @@ impl BDDDomain {
         }
     }
 
+    fn belongs(&self, terminal: BDDLabel) -> bool {
+        terminal >= self.offset && terminal < self.offset + self.binsize
+    }
+
     // check if domain accepts "d"
-    fn bv(&self, b: &mut BDD<usize>, d: usize) -> BDDFunc {
+    fn bv(&self, b: &mut BDD, d: usize) -> BDDFunc {
         let mut val = d;
         let mut v = BDD_ONE;
         for n in 0..self.binsize {
@@ -216,7 +193,7 @@ impl BDDDomain {
         v
     }
 
-    pub fn allowed_values(&self, b: &mut BDD<usize>, f: BDDFunc) -> Vec<usize> {
+    pub fn allowed_values(&self, b: &mut BDD, f: BDDFunc) -> Vec<usize> {
         let mut res = Vec::new();
         for i in 0..self.size {
             let v = self.bv(b, i);
@@ -233,8 +210,65 @@ impl BDDDomain {
     }
 }
 
+pub fn satcount(b: &mut BDD, f: BDDFunc, varcount: usize) -> f64 {
+    let size = f64::powf(2.0, varcount as f64 - 1.0);
+    return size * satcount_rec(b, f);
+}
 
-fn raw(bdd: &mut BDD<usize>, f: BDDFunc) {
+fn satcount_rec(b: &mut BDD, f: BDDFunc) -> f64 {
+    if f == BDD_ONE {
+        return 1.0;
+    } else if f == BDD_ZERO {
+        return 0.0;
+    }
+
+    let node = b.nodes[f].clone();
+    let mut size = 0.0;
+    let mut s = 1.0;
+
+    let low_label = if node.lo == BDD_ONE {
+        1.0
+    } else if node.lo == BDD_ZERO {
+        0.0
+    } else {
+        b.nodes[node.lo].label as f64
+    };
+    s *= f64::powf(2.0, low_label - node.label as f64 - 1.0);
+    size += s * satcount_rec(b, node.lo);
+
+    let hi_label = if node.hi == BDD_ONE {
+        1.0
+    } else if node.hi == BDD_ZERO {
+        0.0
+    } else {
+        b.nodes[node.hi].label as f64
+    };
+    s = 1.0;
+    s *= f64::powf(2.0, hi_label - node.label as f64 - 1.0);
+    size += s * satcount_rec(b, node.hi);
+
+    return size;
+}
+
+#[test]
+fn test_satcount() {
+    let mut bdd = BDD::new();
+    let a = bdd.terminal(0);
+    let b = bdd.terminal(1);
+    let c = bdd.terminal(2);
+
+    let ab = bdd.and(a,b);
+    let abc = bdd.or(ab,c);
+
+
+    let count = satcount(&mut bdd, abc, 3);
+
+    println!("count: {:#?}", count);
+
+    assert!(false);
+}
+
+fn raw(bdd: &mut BDD, f: BDDFunc, d: &BDDDomain) {
     if f == BDD_ZERO {
         println!("input: ZERO");
     }
@@ -248,11 +282,20 @@ fn raw(bdd: &mut BDD<usize>, f: BDDFunc) {
         println!("done");
         return;
     }
-    let node = bdd.node(f);
+    let node = bdd.nodes[f].clone();
     println!("node: {:?}", node);
 
-    raw(bdd, node.lo);
-    raw(bdd, node.hi);
+
+    if node.label == d.offset {
+        println!("node is starting the domain... {}", d.offset);
+        let allowed = d.allowed_values(bdd, f);
+        println!("variable can take on: {:?}", allowed);
+        println!("skipping until variable {}", d.offset + d.binsize);
+    }
+
+
+    raw(bdd, node.lo, d);
+    raw(bdd, node.hi, d);
 }
 
 
@@ -287,19 +330,64 @@ fn test_domain2() {
 
     let x = b.or(x1,x2);
 
+    let p = b.from_expr(&Expr::not(Expr::Terminal(8)));
+    let x = b.and(x, p);
+
 
     let allowed = d.allowed_values(&mut b, x);
     let allowed: Vec<_> = allowed.iter().map(|a| domain[*a].clone()).collect();
     println!("variable can take on: {:#?}", allowed);
 
-    let expr = b.to_expr(x);
-    println!("FULL: {:?}", expr);
-    b.raw(x);
 
-    let n = b.node(x);
+    let n = b.nodes[x].clone();
     println!("NODE: {:?}", n);
 
+    raw(&mut b, x, &d);
 
+    let expr = b.to_expr2(x, 9);
+    println!("FULL: {:?}", expr);
+
+    let cubes = b.to_max_cubes(x, 9);
+
+    for (key, group) in &cubes.cubes().into_iter().group_by(|c| {
+        let v: Vec<_> = c.vars()
+            .enumerate()
+            .flat_map(|(i, v)| match v {
+                &CubeVar::False if !d.belongs(i) => Some(Expr::not(Expr::Terminal(i))),
+                &CubeVar::True if !d.belongs(i) => Some(Expr::Terminal(i)),
+                &CubeVar::DontCare => None,
+                _ => None,
+            }).collect();
+        v
+    }) {
+        let mut x = BDD_ONE;
+        let g: Vec<_> = group.into_iter().cloned().collect();
+        // println!("{:?} - {:?}", key, g);
+        g.into_iter().for_each(|c| {
+            let mut xx = BDD_ZERO;
+            c.vars().enumerate().for_each(|(i, v)| match v {
+                &CubeVar::False if d.belongs(i) => {
+                    let t = b.terminal(i);
+                    let nt = b.not(t);
+                    xx = b.or(xx, nt);
+                },
+                &CubeVar::True if d.belongs(i) => {
+                    let t = b.terminal(i);
+                    xx = b.or(xx, t);
+                },
+                _ => {} ,
+            });
+            x = b.and(x, xx);
+        });
+        let v = d.allowed_values(&mut b, x);
+        for c in &key {
+            print!("{:?} OR ", c);
+        }
+        if v.len() > 0 {
+            println!("d IN {:?} AND ", v);
+        } else { println!("AND"); }
+        // println!("{:?} - {:?}", key, v);
+    }
 
     assert!(false);
 }
