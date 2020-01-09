@@ -28,29 +28,6 @@ pub fn exist(b: &mut BDD, mut f: BDDFunc, variables: &[BDDLabel]) -> BDDFunc {
     f
 }
 
-pub fn replace2(b: &mut BDD, func: BDDFunc, pairing: &[(BDDLabel, BDDLabel)]) -> BDDFunc {
-    let mut f = func;
-    for (s, t) in pairing {
-        // set s to t
-        let s = b.terminal(*s);
-        let t = b.terminal(*t);
-        let f1 = b.and(s, t);
-        let ns = b.not(s);
-        let nt = b.not(t);
-        let f2 = b.and(ns, nt);
-        let iff = b.or(f1, f2);
-        f = b.and(iff, f);
-    }
-
-    for (_, t) in pairing {
-        // quantify away t
-        let sf = b.restrict(f, *t, false);
-        let st = b.restrict(f, *t, true);
-        f = b.or(sf, st);
-    }
-    f // now we have "s"
-}
-
 pub fn replace(b: &mut BDD, func: BDDFunc, pairing: &[(BDDLabel, BDDLabel)]) -> BDDFunc {
     let reverse_pair: Vec<_> = pairing.iter().map(|(a,b)|(*b,*a)).collect();
     b.subst(func, &reverse_pair)
@@ -73,25 +50,6 @@ pub fn swap(b: &mut BDD, func: BDDFunc, pairing: &[(BDDLabel, BDDLabel)], temps:
     let nf = replace(b, func, &pair1);
     let nf = replace(b, nf, pairing);
     replace(b, nf, &pair2)
-}
-
-// swap using temporary terminals
-pub fn swap2(b: &mut BDD, func: BDDFunc, pairing: &[(BDDLabel, BDDLabel)], temps: &[BDDLabel]) -> BDDFunc {
-    let pair1: Vec<_> = pairing
-        .iter()
-        .zip(temps.iter())
-        .map(|((x, _y), z)| (*z, *x))
-        .collect();
-
-    let pair2: Vec<_> = pairing
-        .iter()
-        .zip(temps.iter())
-        .map(|((_x, y), z)| (*y, *z))
-        .collect();
-
-    let nf = replace2(b, func, &pair1);
-    let nf = replace2(b, nf, pairing);
-    replace2(b, nf, &pair2)
 }
 
 pub fn state_to_expr(state: &[bool]) -> Expr<u32> {
@@ -299,6 +257,25 @@ fn raw(bdd: &mut BDD, f: BDDFunc, d: &BDDDomain) {
 }
 
 
+
+pub fn raw_terms(bdd: &mut BDD, f: BDDFunc, acum: &mut Vec<BDDLabel>) {
+    if f == BDD_ZERO || f == BDD_ONE {
+        return;
+    }
+
+    let node = bdd.nodes[f].clone();
+    acum.push(node.label);
+
+    raw_terms(bdd, node.lo, acum);
+    raw_terms(bdd, node.hi, acum);
+}
+
+pub fn terms_in_bddfunc(b: &mut BDD, f: BDDFunc) -> Vec<BDDLabel> {
+    let mut v = Vec::new();
+    raw_terms(b, f, &mut v);
+    v.sort(); v.dedup();
+    v
+}
 
 
 pub fn print_expr_with_domains(b: &mut BDD, num_vars: usize, f: BDDFunc, domains: &[BDDDomain]) {
