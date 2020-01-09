@@ -131,7 +131,7 @@ fn eval_bddfunc(bdd: &BDD, f: BDDFunc, state: &[bool]) -> bool {
     bdd.evaluate(f, state).unwrap()
 }
 
-struct BDDDomain {
+pub struct BDDDomain {
     pub size: usize,
     pub binsize: usize,
     pub offset: usize, // where does the block start in the number of variables
@@ -299,6 +299,67 @@ fn raw(bdd: &mut BDD, f: BDDFunc, d: &BDDDomain) {
 }
 
 
+
+
+pub fn print_expr_with_domains(b: &mut BDD, num_vars: usize, f: BDDFunc, domains: &[BDDDomain]) {
+    let cubes = b.to_max_cubes(f, num_vars);
+    let mut remaining_added: Vec<_> = cubes.cubes().map(|c| (c.clone(), String::new())).collect();
+
+    for d in domains {
+        let next = remaining_added.clone();
+        remaining_added.clear();
+        for (key, group) in &next.iter().group_by(|&(c,s)| {
+            let mut c = c.clone();
+            for i in 0..d.binsize {
+                c = c.with_var(i + d.offset, CubeVar::DontCare);
+            }
+            (c,s)
+        }) {
+            let mut x = BDD_ONE;
+            let g: Vec<_> = group.into_iter().cloned().collect();
+            // println!("{:?} - {:?}", key, g);
+            g.into_iter().for_each(|c| {
+                let mut xx = BDD_ZERO;
+                c.0.vars().enumerate().for_each(|(i, v)| match v {
+                    &CubeVar::False if d.belongs(i) => {
+                        let t = b.terminal(i);
+                        let nt = b.not(t);
+                        xx = b.or(xx, nt);
+                    },
+                    &CubeVar::True if d.belongs(i) => {
+                        let t = b.terminal(i);
+                        xx = b.or(xx, t);
+                    },
+                    _ => {} ,
+                });
+                x = b.and(x, xx);
+            });
+            let v = d.allowed_values(b, x);
+            let s =
+            if v.len() > 0 {
+                // println!("d IN {:?} AND ", v);
+                format!(" v({}) IN {:?} OR {}", d.offset, v, key.1)
+            } else { //println!("AND");
+                key.1.clone()
+            };
+            // println!("{:?} - {:?}", key, v);
+
+            remaining_added.push((key.0, s));
+        }
+    }
+
+    for (cube, domains) in &remaining_added {
+        cube.vars().enumerate().for_each(|(i, v)| match v {
+            &CubeVar::False => print!(" NOT {} OR", i),
+            &CubeVar::True => print!(" {} OR", i),
+            _ => {},
+        });
+        print!("{}", domains);
+        println!(" AND ");
+    }
+}
+
+
 #[test]
 fn test_domain2() {
     let domain: Vec<String> = vec![
@@ -345,77 +406,22 @@ fn test_domain2() {
 
     let x = b.and(x, p);
 
-    let allowed = d.allowed_values(&mut b, x);
-    let allowed: Vec<_> = allowed.iter().map(|a| domain[*a].clone()).collect();
-    println!("variable can take on: {:#?}", allowed);
+    // let allowed = d.allowed_values(&mut b, x);
+    // let allowed: Vec<_> = allowed.iter().map(|a| domain[*a].clone()).collect();
+    // println!("variable can take on: {:#?}", allowed);
 
 
-    let n = b.nodes[x].clone();
-    println!("NODE: {:?}", n);
+    // let n = b.nodes[x].clone();
+    // println!("NODE: {:?}", n);
 
-    raw(&mut b, x, &d);
+    // raw(&mut b, x, &d);
 
-    let expr = b.to_expr2(x, 9);
-    println!("FULL: {:?}", expr);
-
-    let cubes = b.to_max_cubes(x, 9);
+    // let expr = b.to_expr2(x, 9);
+    // println!("FULL: {:?}", expr);
 
     let domains = vec![d, d2];
 
-    let mut remaining_added: Vec<_> = cubes.cubes().map(|c| (c.clone(), String::new())).collect();
-
-    for d in &domains {
-        let next = remaining_added.clone();
-        remaining_added.clear();
-        for (key, group) in &next.iter().group_by(|&(c,s)| {
-            let mut c = c.clone();
-            for i in 0..d.binsize {
-                c = c.with_var(i + d.offset, CubeVar::DontCare);
-            }
-            (c,s)
-        }) {
-            let mut x = BDD_ONE;
-            let g: Vec<_> = group.into_iter().cloned().collect();
-            // println!("{:?} - {:?}", key, g);
-            g.into_iter().for_each(|c| {
-                let mut xx = BDD_ZERO;
-                c.0.vars().enumerate().for_each(|(i, v)| match v {
-                    &CubeVar::False if d.belongs(i) => {
-                        let t = b.terminal(i);
-                        let nt = b.not(t);
-                        xx = b.or(xx, nt);
-                    },
-                    &CubeVar::True if d.belongs(i) => {
-                        let t = b.terminal(i);
-                        xx = b.or(xx, t);
-                    },
-                    _ => {} ,
-                });
-                x = b.and(x, xx);
-            });
-            let v = d.allowed_values(&mut b, x);
-            let s =
-            if v.len() > 0 {
-                // println!("d IN {:?} AND ", v);
-                format!(" v({}) IN {:?} OR {}", d.offset, v, key.1)
-            } else { //println!("AND");
-                key.1.clone()
-            };
-            // println!("{:?} - {:?}", key, v);
-
-            remaining_added.push((key.0, s));
-        }
-    }
-
-    for (cube, domains) in &remaining_added {
-        cube.vars().enumerate().for_each(|(i, v)| match v {
-            &CubeVar::False => print!(" NOT {} OR", i),
-            &CubeVar::True => print!(" {} OR", i),
-            _ => {},
-        });
-        print!("{}", domains);
-        println!(" AND ");
-    }
+    print_expr_with_domains(&mut b, 9, x, &domains);
 
     assert!(false);
 }
@@ -440,6 +446,9 @@ fn test_boolean_domain() {
     let allowed = d.allowed_values(&mut b, x);
     let allowed: Vec<_> = allowed.iter().map(|a| domain[*a].clone()).collect();
     println!("variable can take on: {:#?}", allowed);
+
+    let domains = vec![d];
+    print_expr_with_domains(&mut b, 6, x, &domains);
 
     assert!(false);
 }
