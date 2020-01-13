@@ -8,6 +8,10 @@ mod bdd_helpers;
 use bdd_helpers::*;
 
 
+mod bdd_domain;
+use bdd_domain::*;
+
+
 
 
 fn main() {
@@ -705,18 +709,7 @@ fn new_expr_test() {
     let s = c.pretty_print(&real);
     println!("THE EXPR: {}", s);
 
-
-    assert!(false);
-
-
-    // // set up transitions
-    // let tool_open_d = ("tool_open_d", make_trans(&mut b, not(x(1)), x(2), &vars));
-    // let tool_open_e = (
-    //     "tool_open_e",
-    //     make_trans(&mut b, and(x(2), not(x(1))), and(x(1), not(x(0))), &vars),
-    // );
-
-
+    assert!(!s.is_empty());
 }
 
 
