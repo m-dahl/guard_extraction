@@ -1,10 +1,8 @@
 use boolean_expression::*;
-use Expr;
 use itertools::Itertools;
-use std::cmp::Ord;
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::ops::Add;
+// use std::cmp::Ord;
+// use std::fmt::Debug;
+// use std::hash::Hash;
 
 pub fn relprod(b: &mut BDD, states: BDDFunc, transitions: BDDFunc, variables: &[BDDLabel]) -> BDDFunc {
     let mut f = b.and(states, transitions);
@@ -52,42 +50,149 @@ pub fn swap(b: &mut BDD, func: BDDFunc, pairing: &[(BDDLabel, BDDLabel)], temps:
     replace(b, nf, &pair2)
 }
 
-pub fn state_to_expr(state: &[bool]) -> Expr<u32> {
-    state
-        .iter()
-        .enumerate()
-        .fold(Expr::Const(true), |acc, (i, v)| {
-            if *v {
-                Expr::and(acc, Expr::Terminal(i as u32))
-            } else {
-                Expr::and(acc, Expr::not(Expr::Terminal(i as u32)))
-            }
-        })
+pub fn powerset<T: Clone>(e: &[T]) -> Vec<Vec<T>> {
+    let mut r = Vec::new();
+    for x in 1..(e.len() + 1) {
+        for z in e.iter().combinations(x) {
+            r.push(z.iter().map(|&x| x.clone()).collect());
+        }
+    }
+
+    r
 }
 
-pub fn state_to_expr2<T>(state: &[bool]) -> Expr<T>
-where
-    T: Clone + Debug + Eq + Ord + Hash + Copy + Add<Output=T> + From<usize>,
-{
-    state
-        .iter()
-        .enumerate()
-        .fold(Expr::Const(true), |acc, (i, v)| {
-            if *v {
-                Expr::and(acc, Expr::Terminal(i.into()))
-            } else {
-                Expr::and(acc, Expr::not(Expr::Terminal(i.into())))
-            }
-        })
+#[test]
+fn ps_test() {
+    let mut x = vec![1, 2, 3, 3, 4];
+    x.dedup();
+    let mut x = powerset(&x);
+
+    assert!(x[0] == vec![1]);
+    assert!(x[x.len()-1] == vec![1,2,3,4]);
 }
 
-pub fn state_in_bddfunc(bdd: &BDD, f: BDDFunc, state: &[bool]) -> bool {
-    bdd.evaluate(f, state).unwrap()
+// backwards uncontrollable reachability
+fn ucb(
+    b: &mut BDD,
+    vars: &Vec<BDDLabel>,
+    pairing: &Vec<(BDDLabel, BDDLabel)>,
+    backwards_uncontrollable: BDDFunc,
+    forbidden: BDDFunc,
+) -> BDDFunc {
+    let mut new_forbidden = forbidden;
+
+    loop {
+        let old = new_forbidden;
+        let new = relprod(b, old, backwards_uncontrollable, vars); // possible trans
+        let new = replace(b, new, pairing); // to source states
+        new_forbidden = b.or(old, new);
+
+        if old == new_forbidden {
+            break;
+        }
+    }
+    new_forbidden
 }
 
-fn eval_bddfunc(bdd: &BDD, f: BDDFunc, state: &[bool]) -> bool {
-    bdd.evaluate(f, state).unwrap()
+// backwards reachability
+fn rb(
+    b: &mut BDD,
+    vars: &Vec<BDDLabel>,
+    pairing: &Vec<(BDDLabel, BDDLabel)>,
+    backwards_transitions: BDDFunc,
+    marked: BDDFunc,
+    forbidden: BDDFunc,
+) -> BDDFunc {
+    let not_forbidden = b.not(forbidden);
+    let mut s = b.and(marked, not_forbidden);
+
+    loop {
+        let old = s;
+        let new = relprod(b, old, backwards_transitions, vars); // possible trans
+        let new = replace(b, new, pairing); // to source states
+        s = b.or(old, new);
+        s = b.and(s, not_forbidden);
+
+        if old == s {
+            break;
+        }
+    }
+
+    s
 }
+
+// compute nonblocking and controllability and return the forbidden states
+pub fn nbc(
+    b: &mut BDD,
+    vars: &Vec<BDDLabel>,
+    pairing: &Vec<(BDDLabel, BDDLabel)>,
+    backwards_transitions: BDDFunc,
+    unc_backwards_transitions: BDDFunc,
+    marked: BDDFunc,
+    forbidden: BDDFunc,
+) -> BDDFunc {
+    let mut s = forbidden;
+
+    loop {
+        let old = s;
+        let new = rb(b, vars, pairing, backwards_transitions, marked, old);
+        // new has safe states
+        let forbidden = b.not(new); // and R
+        let new2 = ucb(b, vars, pairing, unc_backwards_transitions, forbidden);
+        s = b.or(s, new2);
+
+        if old == s {
+            break;
+        }
+    }
+
+    s
+}
+
+// compute controllability and return the forbidden states
+pub fn ctrl(
+    b: &mut BDD,
+    vars: &Vec<BDDLabel>,
+    pairing: &Vec<(BDDLabel, BDDLabel)>,
+    ub: BDDFunc,
+    forbidden: BDDFunc,
+) -> BDDFunc {
+    let mut fx = forbidden;
+    loop {
+        let old = fx;
+
+        let new = relprod(b, old, ub, vars); // possible trans
+        let new = replace(b, new, pairing); // to source states
+
+        fx = b.or(new, old);
+        if old == fx {
+            break;
+        }
+    }
+    fx
+}
+
+pub fn reachable(
+    b: &mut BDD,
+    vars: &Vec<BDDLabel>,
+    pairing: &Vec<(BDDLabel, BDDLabel)>,
+    ft: BDDFunc,
+    initial: BDDFunc,
+) -> BDDFunc {
+    let mut r = initial;
+    loop {
+        let old = r;
+        let new = relprod(b, old, ft, vars); // possible trans
+        let new = replace(b, new, pairing); // to source states
+        r = b.or(old, new);
+
+        if old == r {
+            break;
+        }
+    }
+    r
+}
+
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct BDDDomain {
