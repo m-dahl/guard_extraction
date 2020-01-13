@@ -89,6 +89,7 @@ fn eval_bddfunc(bdd: &BDD, f: BDDFunc, state: &[bool]) -> bool {
     bdd.evaluate(f, state).unwrap()
 }
 
+#[derive(Debug, PartialEq, Clone)]
 pub struct BDDDomain {
     pub size: usize,
     pub binsize: usize,
