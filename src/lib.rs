@@ -247,9 +247,10 @@ impl BDDContext {
             }
         }
 
-        let destvars: Vec<_> = (0..offset).map(|i| 1+ i + vars.len()).collect();
-        let temps: Vec<_> = (0..offset).map(|i| 2 + i + 2 * vars.len()).collect();
-        let pairing: Vec<_> = (0..offset)
+        let num_vars = offset;
+        let destvars: Vec<_> = (0..num_vars).map(|i| i + num_vars).collect();
+        let temps: Vec<_> = (0..num_vars).map(|i| i + 2 * num_vars).collect();
+        let pairing: Vec<_> = (0..num_vars)
             .zip(destvars.iter())
             .map(|(x, y)| (x, *y))
             .collect();
@@ -257,7 +258,7 @@ impl BDDContext {
         BDDContext {
             b,
             vars,
-            num_vars: offset,
+            num_vars: num_vars,
             destvars: destvars,
             temps: temps,
             pairing: pairing,
