@@ -171,7 +171,7 @@ impl Context {
                 v.iter().map(|e|self.pretty_print(e)).join(" || ")
             },
             Ex::NOT(e) => {
-                format!("!{}", self.pretty_print(e))
+                format!("!( {} )", self.pretty_print(e))
             },
             Ex::FALSE => "F".to_string(),
             Ex::TRUE => "T".to_string(),

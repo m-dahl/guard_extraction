@@ -191,11 +191,18 @@ pub fn reachable(
 }
 
 pub fn satcount(b: &mut BDD, f: BDDFunc, varcount: usize) -> f64 {
-    let size = f64::powf(2.0, varcount as f64 - 1.0);
-    return size * satcount_rec(b, f);
+    let s = if f == BDD_ZERO {
+        0.0
+    } else if f == BDD_ONE {
+        f64::powf(2.0, varcount as f64)
+    } else {
+        let label = b.nodes[f].label;
+        f64::powf(2.0, label as f64)
+    };
+    s * satcount_rec(b, f, varcount)
 }
 
-fn satcount_rec(b: &mut BDD, f: BDDFunc) -> f64 {
+fn satcount_rec(b: &mut BDD, f: BDDFunc, varcount: usize) -> f64 {
     if f == BDD_ONE {
         return 1.0;
     } else if f == BDD_ZERO {
@@ -203,31 +210,29 @@ fn satcount_rec(b: &mut BDD, f: BDDFunc) -> f64 {
     }
 
     let node = b.nodes[f].clone();
-    let mut size = 0.0;
-    let mut s = 1.0;
 
-    let low_label = if node.lo == BDD_ONE {
-        1.0
+    let low = if node.lo == BDD_ONE {
+        // here is also a diff, if we skip down to one over multiple levels
+        f64::powf(2.0, (varcount - node.label) as f64 - 1.0)
     } else if node.lo == BDD_ZERO {
         0.0
     } else {
-        b.nodes[node.lo].label as f64
+        let low_label = b.nodes[node.lo].label as f64;
+        let s = f64::powf(2.0, low_label - node.label as f64 - 1.0);
+        s * satcount_rec(b, node.lo, varcount)
     };
-    s *= f64::powf(2.0, low_label - node.label as f64 - 1.0);
-    size += s * satcount_rec(b, node.lo);
 
-    let hi_label = if node.hi == BDD_ONE {
-        1.0
+    let high = if node.hi == BDD_ONE {
+        f64::powf(2.0, (varcount - node.label) as f64 - 1.0)
     } else if node.hi == BDD_ZERO {
         0.0
     } else {
-        b.nodes[node.hi].label as f64
+        let hi_label = b.nodes[node.hi].label as f64;
+        let s = f64::powf(2.0, hi_label - node.label as f64 - 1.0);
+        s * satcount_rec(b, node.hi, varcount)
     };
-    s = 1.0;
-    s *= f64::powf(2.0, hi_label - node.label as f64 - 1.0);
-    size += s * satcount_rec(b, node.hi);
 
-    return size;
+    return low + high;
 }
 
 #[test]
@@ -236,13 +241,48 @@ fn test_satcount() {
     let a = bdd.terminal(0);
     let b = bdd.terminal(1);
     let c = bdd.terminal(2);
+    let d = bdd.terminal(3);
+
 
     let ab = bdd.and(a,b);
     let abc = bdd.or(ab,c);
 
+    let nd = bdd.not(d);
+    let abcd = bdd.and(abc,nd);
+
+    let bc = bdd.and(b,c);
+
+
+    // abc
+    // 000
+    // 001 +
+    // 010
+    // 011 +
+    // 100
+    // 101 +
+    // 110 *
+    // 111 *
+
+    let count = satcount(&mut bdd, BDD_ONE, 3);
+    assert_eq!(count, (1 << 3) as f64);
+
+    let count = satcount(&mut bdd, BDD_ZERO, 3);
+    assert_eq!(count, 0f64);
 
     let count = satcount(&mut bdd, abc, 3);
     assert_eq!(count, 5.0);
+
+    let count = satcount(&mut bdd, abcd, 4);
+    assert_eq!(count, 5.0);
+
+    let count = satcount(&mut bdd, abc, 4);
+    assert_eq!(count, 10.0);
+
+    let count = satcount(&mut bdd, bc, 3);
+    assert_eq!(count, 2.0);
+
+    let count = satcount(&mut bdd, bc, 4);
+    assert_eq!(count, 4.0);
 }
 
 pub fn raw_terms(bdd: &mut BDD, f: BDDFunc, acum: &mut Vec<BDDLabel>) {
