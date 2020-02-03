@@ -3,8 +3,6 @@ use std::collections::HashSet;
 use std::iter::FromIterator;
 use itertools::Itertools;
 
-
-use boolean_expression::*;
 use guard_extraction::*;
 
 fn main_old() {
@@ -110,21 +108,20 @@ fn main_old() {
     let forbidden_e = not(imp(eq(tool_e, 0), not(v(tool_opened_m))));
     let forbidden_e = bc.from_expr(&forbidden_e);
 
-    let forbidden = bc.b.or(forbidden, forbidden_a);
-    let forbidden = bc.b.or(forbidden, forbidden_b);
-    let forbidden = bc.b.or(forbidden, forbidden_c);
-    let forbidden = bc.b.or(forbidden, forbidden_d);
-    let forbidden = bc.b.or(forbidden, forbidden_e);
+    let forbidden = bc.b.or(&forbidden, &forbidden_a);
+    let forbidden = bc.b.or(&forbidden, &forbidden_b);
+    let forbidden = bc.b.or(&forbidden, &forbidden_c);
+    let forbidden = bc.b.or(&forbidden, &forbidden_d);
+    let forbidden = bc.b.or(&forbidden, &forbidden_e);
 
-    let (reachable, bad, controllable) = bc.controllable(BDD_ONE, forbidden);
+    let (reachable, bad, controllable) = bc.reachable(&bc.b.one(), &forbidden);
 
-    let state_count = satcount(&mut bc.b, controllable, vars.len());
+    let state_count = bc.b.satcount(&controllable);
     println!("Nbr of states in supervisor: {}\n", state_count);
-    let reachable_state_count = satcount(&mut bc.b, reachable, vars.len());
+    let reachable_state_count = bc.b.satcount(&reachable);
     println!("Nbr of reachable states: {}\n", reachable_state_count);
 
-
-    let new_guards = bc.compute_guards(controllable, bad);
+    let new_guards = bc.compute_guards(&controllable, &bad);
 
     for (trans, guard) in &new_guards {
         let s = c.pretty_print(&guard);
@@ -152,7 +149,7 @@ fn main_buddy() {
     let robot_moving_m = c.add_bool("robot_moving_m");
     let tool_e = c.add_enum("tool_e", 2); // 0 = home, 1 = robot
 
-    let mut bc = BDDContext2::from(&c);
+    let mut bc = BDDContext::from(&c);
 
 
     println!("{:?}", bc.vars);
@@ -247,10 +244,9 @@ fn main_buddy() {
     let state_count = bc.b.satcount(&reachable);
     println!("Nbr of reachable states: {}\n", state_count / f64::powf(2.0, 24.0));
 
-    let ex = bc.to_expr(&bad);
-    let s = c.pretty_print(&ex);
-    println!("ALL CONTROLLABLE: {}", s);
-
+    // let ex = bc.to_expr(&bad);
+    // let s = c.pretty_print(&ex);
+    // println!("ALL CONTROLLABLE: {}", s);
 
     let new_guards = bc.compute_guards(&controllable, &bad);
 
@@ -278,7 +274,7 @@ fn main_mini() {
     let r2_away_m = c.add_bool("r2_away_m");
     let r2_away_c = c.add_bool("r2_away_c");
 
-    let mut bc = BDDContext2::from(&c);
+    let mut bc = BDDContext::from(&c);
 
     println!("{:?}", bc.vars);
     let vars: Vec<_> = (0..bc.num_vars).map(|x|x).collect();
