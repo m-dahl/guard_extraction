@@ -8,4 +8,5 @@ edition = "2018"
 
 [dependencies]
 boolean_expression = { git="https://github.com/m-dahl/boolean_expression.git" }
+buddy-rs = { path="../buddy-sys/buddy-rs/" }
 itertools = "0.8.1"
