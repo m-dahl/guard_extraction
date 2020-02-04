@@ -163,11 +163,7 @@ pub struct BDDContext<'a> {
 }
 
 impl<'a> BDDContext<'a> {
-    // TODO: the litterature is fairly decided on using an interleaved
-    // variable ordering for better performance. for now we just put all
-    // next values at the end.
     pub fn from(c: &Context, b: &'a BDDManager) -> Self {
-        //let b = take_manager(10000, 10000, 24);
         let mut vars = Vec::new();
         let mut offset = 0i32; // keep track of last added variable
 
@@ -215,10 +211,8 @@ impl<'a> BDDContext<'a> {
         let temp_offset = num_bdd_normal_vars * 2;
         let temp_vars: Vec<_> = (temp_offset .. temp_offset + num_bdd_normal_vars).collect();
 
-        let pairing: Vec<_> = normal_vars.iter()
-            .zip(next_vars.iter())
-            .map(|(x, y)| (*x as i32, *y as i32))
-            .collect();
+        let pairing: Vec<_> = normal_vars.iter().zip(next_vars.iter())
+            .map(|(x, y)| (*x as i32, *y as i32)).collect();
 
         let next_to_normal: Vec<_> = pairing.iter().map(|(x,y)| (*y,*x)).collect();
         let next_to_normal = b.make_pair(&next_to_normal);
@@ -637,7 +631,7 @@ impl<'a> BDDContext<'a> {
         new_guard
     }
 
-    // uses exhaustive search to eliminate a maximum number of terms
+    // uses exhaustive search to eliminate more terms
     #[allow(dead_code)]
     fn compute_minimal_guard(
         &self,
