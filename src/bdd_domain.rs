@@ -1,14 +1,15 @@
+use buddy_rs::*;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct BDDDomain {
     pub size: i32,
     pub binsize: i32,
     pub offset: i32, // where does the block start in the number of variables
-    pub dom: buddy_rs::BDD,
+    pub dom: BDD,
 }
 
 impl BDDDomain {
-    pub fn new(b: &buddy_rs::BDDManager, size: i32, offset: i32) -> Self {
+    pub fn compute_binsize(size: i32) -> i32 {
         let mut binsize = 1;
         let mut calcsize = 2;
 
@@ -16,6 +17,11 @@ impl BDDDomain {
             binsize += 1;
             calcsize *= 2;
         }
+        binsize
+    }
+
+    pub fn new(b: &BDDManager, size: i32, offset: i32) -> Self {
+        let binsize = Self::compute_binsize(size);
 
         let mut val = size - 1;
         let mut dom = b.one();
@@ -41,12 +47,12 @@ impl BDDDomain {
         }
     }
 
-    pub fn belongs(&self, terminal: buddy_rs::BDDVar) -> bool {
+    pub fn belongs(&self, terminal: BDDVar) -> bool {
         terminal >= self.offset && terminal < self.offset + self.binsize
     }
 
     // check if domain accepts "d"
-    pub fn digit(&self, b: &buddy_rs::BDDManager, d: i32) -> buddy_rs::BDD {
+    pub fn digit(&self, b: &BDDManager, d: i32) -> BDD {
         let mut val = d;
         let mut v = b.one();
         for n in 0..self.binsize {
@@ -62,7 +68,7 @@ impl BDDDomain {
         v
     }
 
-    pub fn allowed_values(&self, b: &buddy_rs::BDDManager, f: &buddy_rs::BDD) -> Vec<i32> {
+    pub fn allowed_values(&self, b: &BDDManager, f: &BDD) -> Vec<i32> {
         let mut res = Vec::new();
         for i in 0..self.size {
             let v = self.digit(b, i);
@@ -74,11 +80,11 @@ impl BDDDomain {
         res
     }
 
-    pub fn domain_bdd(&self) -> buddy_rs::BDD {
+    pub fn domain_bdd(&self) -> BDD {
         self.dom.clone()
     }
 
-    pub fn equals(&self, other: &BDDDomain, b: &buddy_rs::BDDManager) -> buddy_rs::BDD {
+    pub fn equals(&self, b: &BDDManager, other: &BDDDomain) -> BDD {
         if self.binsize != other.binsize {
             return b.zero();
         }
@@ -87,13 +93,7 @@ impl BDDDomain {
         for n in 0..self.binsize {
             let at = b.ithvar(n + self.offset);
             let bt = b.ithvar(n + other.offset);
-            let nat = b.not(&at);
-            let nbt = b.not(&bt);
-
-            let ab = b.and(&at,&bt);
-            let nab = b.and(&nat,&nbt);
-            let iff = b.or(&ab, &nab);
-
+            let iff = b.biimp(&at, &bt);
             r = b.and(&r, &iff);
         }
         r
