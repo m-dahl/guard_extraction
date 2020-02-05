@@ -30,40 +30,44 @@ fn main_buddy(b: &buddy_rs::BDDManager) {
     let imp = |a, b| Ex::OR(vec![not(a), b]);
     let eq = |v, n| Ex::EQ(v, Value::InDomain(n));
 
-    bc.c_trans("tool_open_d", not(v(tool_opened_m)), eq(tool_gs_c, 1));
-    bc.uc_trans("tool_open_e", and(vec![eq(tool_gs_c, 1), not(v(tool_opened_m))]),
-             and(vec![v(tool_opened_m), not(v(tool_closed_m))]));
+    let aeq = |v, n| Ac { var: v, val: Value::InDomain(n) };
+    let at = |v| Ac { var: v, val: Value::Bool(true) };
+    let an = |v| Ac { var: v, val: Value::Bool(false) };
 
-    bc.c_trans("tool_close_d", not(v(tool_closed_m)), eq(tool_gs_c, 0));
+
+    bc.c_trans("tool_open_d", not(v(tool_opened_m)), &[aeq(tool_gs_c, 1)]);
+    bc.uc_trans("tool_open_e", and(vec![eq(tool_gs_c, 1), not(v(tool_opened_m))]),
+                &[at(tool_opened_m), an(tool_closed_m)]);
+
+    bc.c_trans("tool_close_d", not(v(tool_closed_m)), &[aeq(tool_gs_c, 0)]);
     bc.uc_trans("tool_close_e", and(vec![eq(tool_gs_c, 0), not(v(tool_closed_m))]),
-             and(vec![v(tool_closed_m), not(v(tool_opened_m))]));
+                &[at(tool_closed_m), an(tool_opened_m)]);
 
     bc.c_trans("rsp_lock_d", or(vec![eq(rsp_lock_e, 1), eq(rsp_lock_e, 2)]),
-            and(vec![v(rsp_lock_l_c), not(v(rsp_lock_u_c)), eq(rsp_lock_e, 0)]));
+               &[at(rsp_lock_l_c), an(rsp_lock_u_c), aeq(rsp_lock_e, 0)]);
 
     bc.c_trans("rsp_unlock_d", or(vec![eq(rsp_lock_e, 0), eq(rsp_lock_e, 2)]),
-            and(vec![not(v(rsp_lock_l_c)), v(rsp_lock_u_c), eq(rsp_lock_e, 1)]));
+               &[an(rsp_lock_l_c), at(rsp_lock_u_c), aeq(rsp_lock_e, 1)]);
 
 
-    bc.c_trans("robot_p0_d", and(vec![v(robot_p_m), v(robot_p_c), v(robot_p_e)]), not(v(robot_p_c)));
-    bc.uc_trans("robot_p0_se", and(vec![v(robot_p_m), not(v(robot_p_c)), not(v(robot_moving_m))]), v(robot_moving_m));
+    bc.c_trans("robot_p0_d", and(vec![v(robot_p_m), v(robot_p_c), v(robot_p_e)]), &[an(robot_p_c)]);
+    bc.uc_trans("robot_p0_se", and(vec![v(robot_p_m), not(v(robot_p_c)), not(v(robot_moving_m))]), &[at(robot_moving_m)]);
     bc.uc_trans("robot_p0_ee", and(vec![v(robot_p_m), not(v(robot_p_c)), v(robot_moving_m)]),
-             and(vec![not(v(robot_p_m)), not(v(robot_moving_m))]));
+                &[an(robot_p_m), an(robot_moving_m)]);
     bc.uc_trans("robot_p0_fa", and(vec![not(v(robot_p_m)), not(v(robot_p_c)), not(v(robot_moving_m)), v(robot_p_e)]),
-             not(v(robot_p_e)));
+                &[an(robot_p_e)]);
 
-
-    bc.c_trans("robot_p1_d", and(vec![not(v(robot_p_m)), not(v(robot_p_c)), not(v(robot_p_e))]), v(robot_p_c));
-    bc.uc_trans("robot_p1_se", and(vec![not(v(robot_p_m)), v(robot_p_c), not(v(robot_moving_m))]), v(robot_moving_m));
+    bc.c_trans("robot_p1_d", and(vec![not(v(robot_p_m)), not(v(robot_p_c)), not(v(robot_p_e))]), &[at(robot_p_c)]);
+    bc.uc_trans("robot_p1_se", and(vec![not(v(robot_p_m)), v(robot_p_c), not(v(robot_moving_m))]), &[at(robot_moving_m)]);
     bc.uc_trans("robot_p1_ee", and(vec![not(v(robot_p_m)), v(robot_p_c), v(robot_moving_m)]),
-             and(vec![v(robot_p_m), not(v(robot_moving_m))]));
+                &[at(robot_p_m), an(robot_moving_m)]);
     bc.uc_trans("robot_p1_fa", and(vec![v(robot_p_m), v(robot_p_c), not(v(robot_moving_m)), not(v(robot_p_e))]),
-             v(robot_p_e));
+                &[at(robot_p_e)]);
 
     bc.uc_trans("tool_e_home_a", and(vec![eq(tool_e, 1), not(v(robot_p_m)), eq(rsp_lock_e, 1)]),
-             eq(tool_e, 0));
+                &[aeq(tool_e, 0)]);
     bc.uc_trans("tool_e_robot_a", and(vec![eq(tool_e, 0), not(v(robot_p_m)), eq(rsp_lock_e, 0)]),
-             eq(tool_e, 1));
+                &[aeq(tool_e, 1)]);
 
     // // let is = [false, false, false, false, false, false, true, false, false, true, false, false];
     // // let ise = state_to_expr2(&is);
@@ -106,9 +110,11 @@ fn main_buddy(b: &buddy_rs::BDDManager) {
 
     let new_guards = bc.compute_guards(&controllable, &bad);
 
+    println!("\n");
     for (trans, guard) in &new_guards {
         let s = c.pretty_print(&guard);
         println!("NEW GUARD FOR {}: {}", trans, s);
+        println!("\n");
     }
 
 }
@@ -142,33 +148,37 @@ fn main_mini(b: &buddy_rs::BDDManager) {
     let _imp = |a, b| Ex::OR(vec![not(a), b]);
     let _eq = |v, n| Ex::EQ(v, Value::InDomain(n));
 
+    let aeq = |v, n| Ac { var: v, val: Value::InDomain(n) };
+    let at = |v| Ac { var: v, val: Value::Bool(true) };
+    let an = |v| Ac { var: v, val: Value::Bool(false) };
+
     bc.c_trans("r1_to_at_d",
                not(v(r1_at_m)),
-               v(r1_at_c));
+               &[at(r1_at_c)]);
     bc.uc_trans("r1_to_at_e",
                 and(vec![v(r1_at_c), not(v(r1_at_m))]),
-                v(r1_at_m));
+                &[at(r1_at_m)]);
 
     bc.c_trans("r1_to_away_d",
                not(v(r1_away_m)),
-               v(r1_away_c));
+               &[at(r1_away_c)]);
     bc.uc_trans("r1_to_away_e",
                 and(vec![v(r1_away_c), not(v(r1_away_m))]),
-                v(r1_away_m));
+                &[at(r1_away_m)]);
 
     bc.c_trans("r2_to_at_d",
                not(v(r2_at_m)),
-               v(r2_at_c));
+               &[at(r2_at_c)]);
     bc.uc_trans("r2_to_at_e",
                 and(vec![v(r2_at_c), not(v(r2_at_m))]),
-                v(r2_at_m));
+                &[at(r2_at_m)]);
 
     bc.c_trans("r2_to_away_d",
                not(v(r2_away_m)),
-               v(r2_away_c));
+               &[at(r2_away_c)]);
     bc.uc_trans("r2_to_away_e",
                 and(vec![v(r2_away_c), not(v(r2_away_m))]),
-                v(r2_away_m));
+                &[at(r2_away_m)]);
 
     // both cannot be at at
     let forbidden = and(vec![v(r1_at_m), v(r2_at_m)]);

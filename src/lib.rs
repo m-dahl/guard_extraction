@@ -585,8 +585,8 @@ impl<'a> BDDContext<'a> {
             action = self.b.and(&action, &a);
         }
         let f = self.make_trans_free(&g, &action, &free);
-
         self.transitions.insert(name.into(), f.clone());
+
         self.uc_transitions.insert(name.into(), f);
         let b = self.make_backward_trans(&g, &action);
         self.buc_transitions.insert(name.into(), b);
@@ -668,29 +668,26 @@ impl<'a> BDDContext<'a> {
             let bt = self.swap_normal_and_next(&trans);
 
             let x = self.b.relprod(&controllable, &bt, &self.normal_vars);
-            let x = self.b.replace(&x, &self.next_to_normal);
-
-            // x is new guard. use it and compare with original trans
-            let orig_guard = self.b.exist(&trans, &self.next_vars);
-            let new_guard = self.b.exist(&x, &self.next_vars);
-
-            // TODO: investigate which of these is more suitable
-            // let constrained = self.b.constrain(&new_guard, &orig_guard);
-            let new_guard = self.b.simplify(&new_guard, &orig_guard);
+            let new_guard = self.b.replace(&x, &self.next_to_normal);
 
             let xf = self.b.and(&trans, &new_guard);
-            let y = self.b.relprod(&controllable, &trans, &self.normal_vars);
-            let z = self.b.relprod(&controllable, &xf, &self.normal_vars);
+
+            // are the transitions the same?
+            let y = self.b.and(&controllable, &trans);
+            let z = self.b.and(&controllable, &xf);
 
             if y != z {
                 // let now = std::time::Instant::now();
 
-                // let mg = self.compute_minimal_guard(&new_guard,&trans,&controllable,&bad);
-                let mg = self.compute_guard(&new_guard,&trans,&controllable,&bad);
+                // simplify out previous guard from new guard.
+                let orig_guard = self.b.exist(&trans, &self.next_vars);
+                let new_guard = self.b.simplify(&new_guard, &orig_guard);
+                let new_guard = self.compute_guard(&z, &new_guard,&trans,&controllable,&bad);
 
                 // println!("new guard computed in {}ms", now.elapsed().as_millis());
 
-                new_guards.insert(name.clone(), mg);
+
+                new_guards.insert(name.clone(), new_guard);
             }
         }
 
@@ -700,16 +697,12 @@ impl<'a> BDDContext<'a> {
 
     fn compute_guard(
         &self,
+        reachable: &BDD,
         new_guard: &BDD,
         trans: &BDD,
         good_states: &BDD,
         bad_states: &BDD) -> BDD {
-
-        // try to remove terms that doesnt lead us to a forbidden state
-        // and doesn't over-constrain us wrt the reachable states
-        let temp = self.b.and(&trans, &new_guard);
-        let bt = self.swap_normal_and_next(&temp);
-        let z = self.b.relprod(&good_states, &bt, &self.normal_vars);
+        let z = reachable;
 
         let support = self.b.support(&new_guard);
         let support_vars = self.b.scan_set(&support);
@@ -726,13 +719,14 @@ impl<'a> BDDContext<'a> {
             let temp = self.b.and(&trans, &temp_ng);
 
             let bt = self.swap_normal_and_next(&temp);
-            let y = self.b.relprod(&bad_states, &bt, &self.normal_vars);
-            let y = self.b.replace(&y, &self.next_to_normal);
-            let y = self.b.and(&y, &good_states);
+
+            let y = self.b.and(&bad_states, &bt);
+            //let y = self.b.replace(&y, &self.next_to_normal);
+            //let y = self.b.and(&y, &good_states);
 
             if y == self.b.zero() {
-                let zz = self.b.relprod(&good_states, &bt, &self.normal_vars);
-                if z == zz { // no loss of permissiveness
+                let zz = self.b.and(&good_states, &temp);
+                if z == &zz { // no loss of permissiveness
                     new_guard = temp_ng.clone();
                 }
             }
