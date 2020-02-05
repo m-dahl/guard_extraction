@@ -375,14 +375,16 @@ impl<'a> BDDContext<'a> {
     }
 
     pub fn to_expr(&self, f: &BDD) -> Ex {
-        let cubes = self.b.allsat_vec(f);
+        // make sure we respect the domains of our variables.
+        let rd = self.respect_domains();
+        let f = self.b.and(&f, &rd);
+        let cubes = self.b.allsat_vec(&f);
 
         // transform these cubes back into their original definitions
 
         let mut domain_cubes = Vec::new();
 
         for cube in &cubes {
-
             let mut new_cube = Vec::new();
             for v in &self.vars {
 
@@ -417,12 +419,12 @@ impl<'a> BDDContext<'a> {
                             });
 
                             let allowed = dom.allowed_values(&self.b, &allowed);
+
+                            assert!(allowed.len() > 0);
                             DomainCubeVal::Domain(allowed)
                         }
-
                     }
                 };
-
                 new_cube.push(res)
             }
             domain_cubes.push(new_cube);
@@ -496,11 +498,10 @@ impl<'a> BDDContext<'a> {
         }
         let ub = self.swap_normal_and_next(&uc);
 
-        // forbidden states always include respecting the domains of the variables
+        // forbidden states always include respecting the domains of
+        // the variables.
         let rd = self.respect_domains();
-        let nrd = self.b.not(&rd);
-
-        let forbidden = self.b.or(&forbidden, &nrd);
+        let forbidden = self.b.and(&forbidden, &rd);
 
         ctrl(&self.b, &forbidden, &ub, &self.normal_vars, &self.next_to_normal)
     }
