@@ -34,6 +34,7 @@ pub fn ctrl(
     backward_unc_trans: &BDD, vars: &BDD,
     pair: &BDDPair) -> BDD {
     let mut fx = forbidden.clone();
+
     loop {
         let old = fx;
         let new = bdd.relprod(&old, backward_unc_trans, vars);
@@ -133,9 +134,9 @@ pub enum BDDVarType {
 
 #[derive(Debug, Clone)]
 pub struct BDDVar {
-    orig_var_id: i32,
-    bdd_var_id: i32,
-    var_type: BDDVarType
+    pub orig_var_id: i32,
+    pub bdd_var_id: i32,
+    pub var_type: BDDVarType
 }
 
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone)]
@@ -152,6 +153,7 @@ pub struct BDDContext<'a> {
 
     pub transitions: HashMap<String, BDD>,
     pub uc_transitions: HashMap<String, BDD>,
+    pub buc_transitions: HashMap<String, BDD>,
 
     next_to_normal: BDDPair,
     normal_to_next: BDDPair,
@@ -241,6 +243,7 @@ impl<'a> BDDContext<'a> {
             num_bdd_normal_vars,
             transitions: HashMap::new(),
             uc_transitions: HashMap::new(),
+            buc_transitions: HashMap::new(),
 
             next_to_normal,
             normal_to_next,
@@ -308,14 +311,11 @@ impl<'a> BDDContext<'a> {
 
                                 // ok, now encode logical equivalence
                                 let ov = self.b.ithvar(ov.bdd_var_id);
-                                let nbv = self.b.not(&bv);
-                                let nov = self.b.not(&ov);
-                                let bv_and_ov = self.b.and(&bv,&ov);
-                                let nbv_and_nov = self.b.and(&nbv, &nov);
-
-                                // bv <-> ov
-                                self.b.or(&bv_and_ov, &nbv_and_nov)
+                                self.b.biimp(&bv, &ov)
                             },
+                            Value::Free => {
+                                panic!("cannot check for free")
+                            }
                         }
                     },
                     BDDVarType::Enum(ref bdddom) => {
@@ -340,11 +340,75 @@ impl<'a> BDDContext<'a> {
                                 } else {
                                     panic!("other needs to be enum also...");
                                 }
-
+                            },
+                            Value::Free => {
+                                panic!("cannot check for free")
                             }
                         }
 
                     },
+                }
+            },
+        }
+    }
+
+
+    // already handles next values.
+    pub fn from_ac(&mut self, a: &Ac) -> (BDD, Vec<i32>) {
+        let v = self.vars.iter().find(|v| v.orig_var_id == a.var as i32).expect("variable not found");
+
+        // handle bools and enums separately
+        match v.var_type {
+            BDDVarType::Bool => {
+                // we want to set the "next" value
+                let bv = self.b.ithvar(v.bdd_var_id);
+                // so we replace bv with its next pair to get bv'
+                let bv = self.b.replace(&bv, &self.normal_to_next);
+                match &a.val {
+                    Value::Bool(true) => (bv, vec![]),
+                    Value::Bool(false) => (self.b.not(&bv), vec![]),
+                    Value::InDomain(_n) => panic!("bool does not have a domain!"),
+                    Value::Var(other) => {
+                        let ov = self.vars.iter().find(|v| v.orig_var_id == *other as i32).unwrap();
+                        // other var needs to be a bool also
+                        assert!(ov.var_type == BDDVarType::Bool);
+
+                        // keed other var as "current" value
+                        let ov = self.b.ithvar(ov.bdd_var_id);
+
+                        (self.b.biimp(&bv, &ov), vec![])
+                    },
+                    Value::Free => {
+                        (self.b.one(), vec![v.bdd_var_id]) // bv free to be set by planner
+                    }
+                }
+            },
+            BDDVarType::Enum(ref bdddom) => {
+                match &a.val {
+                    Value::Bool(_b) => panic!("not a boolean!"),
+                    Value::InDomain(n) => {
+                        // check if value is in domain...
+                        assert!((*n as i32) < bdddom.size, "value must be in domain!");
+                        let digit_current = bdddom.digit(&self.b, *n as i32);
+                        let digit_next = self.b.replace(&digit_current, &self.normal_to_next);
+                        (digit_next, vec![])
+                    },
+                    Value::Var(other) => {
+                        // check that other value is also an enum
+                        let ov = self.vars.iter().find(|v| v.orig_var_id == *other as i32).unwrap();
+                        // other var needs to be a bool also
+                        if let BDDVarType::Enum(ref od) = ov.var_type {
+                            // ensure the same number of bdd terminals
+                            assert!(bdddom.binsize == od.binsize);
+                            (bdddom.equals_cur_next(&self.b, od, &self.normal_to_next), vec![])
+                            // panic!("domain assignment is todo!");
+                        } else {
+                            panic!("other needs to be enum also...");
+                        }
+                    },
+                    Value::Free => {
+                        (self.b.one(), (0..bdddom.binsize).map(|n| v.bdd_var_id + n as i32).collect())
+                    }
                 }
             },
         }
@@ -437,28 +501,29 @@ impl<'a> BDDContext<'a> {
         self.domain_cubes_to_ex(&domain_cubes)
     }
 
-    fn make_trans(&mut self, guard: &BDD, action: &BDD) -> BDD {
+    fn make_trans_free(&mut self, guard: &BDD, action: &BDD, free: &[i32]) -> BDD {
         let action_support = self.b.support(&action);
         let terms_in_action = self.b.scan_set(&action_support);
-        let terms_in_action: HashSet<_> = HashSet::from_iter(terms_in_action.iter().cloned());
+        let mut terms_in_action: HashSet<_> = HashSet::from_iter(terms_in_action.iter().cloned());
+        terms_in_action.extend(free.iter());
 
-        let all_normal_vars = self.b.scan_set(&self.normal_vars);
-        let all_normal_vars: HashSet<_> = HashSet::from_iter(all_normal_vars.iter().cloned());
+        let all_next_vars = self.b.scan_set(&self.next_vars);
+        let all_next_vars: HashSet<_> = HashSet::from_iter(all_next_vars.iter().cloned());
 
-        let not_updated: Vec<_> = all_normal_vars.difference(&terms_in_action).cloned().collect();
+        let not_updated: Vec<_> = all_next_vars.difference(&terms_in_action).cloned().collect();
 
         let iffs = not_updated.iter().fold(self.b.one(), |acc, i| {
-            // we want a = a'
+            // we want a = a', we have b'
             let a = self.b.ithvar(*i);
             // so we replace a with its next pair to get a'
             let b = self.b.ithvar(*i);
-            let b = self.b.replace(&b, &self.normal_to_next);
+            let b = self.b.replace(&b, &self.next_to_normal);
 
             let iff = self.b.biimp(&a, &b);
             self.b.and(&acc, &iff)
         });
 
-        let action = self.swap_normal_and_next(&action);
+        // let action = self.swap_normal_and_next(&action);
 
         // return guards + action + additional iffs for keeping others unchanged
         let trans = self.b.and(&guard, &action);
@@ -466,20 +531,65 @@ impl<'a> BDDContext<'a> {
         self.b.and(&trans, &iffs)
     }
 
-    pub fn c_trans(&mut self, name: &str, guard: Ex, action: Ex) {
+    fn make_backward_trans(&mut self, guard: &BDD, action: &BDD) -> BDD {
+        let action_support = self.b.support(&action);
+        let terms_in_action = self.b.scan_set(&action_support);
+        let terms_in_action: HashSet<_> = HashSet::from_iter(terms_in_action.iter().cloned());
+
+        let all_next_vars = self.b.scan_set(&self.next_vars);
+        let all_next_vars: HashSet<_> = HashSet::from_iter(all_next_vars.iter().cloned());
+
+        let not_updated: Vec<_> = all_next_vars.difference(&terms_in_action).cloned().collect();
+
+        let iffs = not_updated.iter().fold(self.b.one(), |acc, i| {
+            // we want a = a'
+            let a = self.b.ithvar(*i);
+            // so we replace a with its next pair to get a'
+            let b = self.b.ithvar(*i);
+            let b = self.b.replace(&b, &self.next_to_normal);
+
+            let iff = self.b.biimp(&a, &b);
+            self.b.and(&acc, &iff)
+        });
+
+        let action = self.swap_normal_and_next(&action);
+        let guard = self.swap_normal_and_next(&guard);
+
+        // return guards + action + additional iffs for keeping others unchanged
+        let trans = self.b.and(&guard, &action);
+
+        self.b.and(&trans, &iffs)
+    }
+
+    pub fn c_trans(&mut self, name: &str, guard: Ex, actions: &[Ac]) {
         let g = self.from_expr(&guard);
-        let a = self.from_expr(&action);
-        let f = self.make_trans(&g, &a);
+        let mut free = Vec::new();
+        let mut action = self.b.one();
+        for a in actions {
+            let (a,f) = self.from_ac(&a);
+            free.extend(f.iter());
+            action = self.b.and(&action, &a);
+        }
+
+        let f = self.make_trans_free(&g, &action, &free);
         self.transitions.insert(name.into(), f);
     }
 
-    pub fn uc_trans(&mut self, name: &str, guard: Ex, action: Ex) {
+    pub fn uc_trans(&mut self, name: &str, guard: Ex, actions: &[Ac]) {
         let g = self.from_expr(&guard);
-        let a = self.from_expr(&action);
-        let f = self.make_trans(&g, &a);
+        let mut free = Vec::new();
+        let mut action = self.b.one();
+        for a in actions {
+            let (a,f) = self.from_ac(&a);
+            free.extend(f.iter());
+            action = self.b.and(&action, &a);
+        }
+        let f = self.make_trans_free(&g, &action, &free);
+
         self.transitions.insert(name.into(), f.clone());
         self.uc_transitions.insert(name.into(), f);
-
+        let b = self.make_backward_trans(&g, &action);
+        self.buc_transitions.insert(name.into(), b);
     }
 
     fn respect_domains(&self) -> BDD {
@@ -492,18 +602,21 @@ impl<'a> BDDContext<'a> {
     }
 
     pub fn extend_forbidden(&self, forbidden: &BDD) -> BDD {
-        let mut uc = self.b.zero();
-        for t in self.uc_transitions.values() {
-            uc = self.b.or(&uc, t);
+        // uncontrollable backwards
+        let mut ub = self.b.zero();
+        for t in self.buc_transitions.values() {
+            ub = self.b.or(&ub, &t);
         }
-        let ub = self.swap_normal_and_next(&uc);
 
         // forbidden states always include respecting the domains of
         // the variables.
         let rd = self.respect_domains();
         let forbidden = self.b.and(&forbidden, &rd);
 
-        ctrl(&self.b, &forbidden, &ub, &self.normal_vars, &self.next_to_normal)
+        let c = ctrl(&self.b, &forbidden, &ub, &self.normal_vars, &self.next_to_normal);
+        let sat = self.b.satcount_set(&c, &self.normal_vars);
+        println!("Numer of forbidden: {}\n", sat);
+        c
     }
 
     pub fn controllable(&self, initial: &BDD, forbidden: &BDD) -> (BDD, BDD, BDD) {
@@ -512,18 +625,10 @@ impl<'a> BDDContext<'a> {
             ft = self.b.or(&ft, t);
         }
 
-        let mut uc = self.b.zero();
-        for t in self.uc_transitions.values() {
-            uc = self.b.or(&uc, t);
-        }
-
-        // make sure initial states take the variable domains into account.
+        // make sure forbidden and initial states take the variable domains into account.
         let rd = self.respect_domains();
-
+        let forbidden = self.b.and(&forbidden, &rd);
         let initial = self.b.and(&initial, &rd);
-
-        let not_forbidden = self.b.not(&forbidden);
-        let initial = self.b.and(&initial, &not_forbidden);
 
         // find all reachable states
         let now = std::time::Instant::now();
@@ -534,8 +639,12 @@ impl<'a> BDDContext<'a> {
         println!("Numer of reachable: {}\n", sat);
 
         // uncontrollable backwards
-        let ub = self.swap_normal_and_next(&uc);
+        let mut ub = self.b.zero();
+        for t in self.buc_transitions.values() {
+            ub = self.b.or(&ub, &t);
+        }
 
+        let now = std::time::Instant::now();
         let bad = ctrl(&self.b, &forbidden, &ub, &self.normal_vars, &self.next_to_normal);
 
         let n_bad = self.b.not(&bad);

@@ -98,4 +98,23 @@ impl BDDDomain {
         }
         r
     }
+
+    // special case when we want to assign next(self) = other.
+    pub fn equals_cur_next(&self, b: &BDDManager, other: &BDDDomain, current_to_next: &BDDPair) -> BDD {
+        if self.binsize != other.binsize {
+            return b.zero();
+        }
+
+        let mut r = b.one();
+        for n in 0..self.binsize {
+            let at = b.ithvar(n + self.offset);
+            // so we replace at with its next pair to get at'
+            let at = b.replace(&at, &current_to_next);
+
+            let bt = b.ithvar(n + other.offset);
+            let iff = b.biimp(&at, &bt);
+            r = b.and(&r, &iff);
+        }
+        r
+    }
 }

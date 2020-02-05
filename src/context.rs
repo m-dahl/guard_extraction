@@ -16,6 +16,13 @@ pub enum Value {
     Bool(bool), // special case for booleans
     InDomain(usize), // index into domain
     Var(usize),   // value of other variable
+    Free,        // for free actions.
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ac {
+    pub var: usize, // index in context
+    pub val: Value,
 }
 
 pub enum Domain {
@@ -51,10 +58,10 @@ impl Context {
     pub fn pretty_print(&self, expr: &Ex) -> String {
         match expr {
             Ex::AND(v) => {
-                v.iter().map(|e|self.pretty_print(e)).join(" && ")
+                format!("( {} )", v.iter().map(|e|self.pretty_print(e)).join(" && "))
             },
             Ex::OR(v) => {
-                v.iter().map(|e|self.pretty_print(e)).join(" || ")
+                format!("( {} )", v.iter().map(|e|self.pretty_print(e)).join(" || "))
             },
             Ex::NOT(e) => {
                 format!("!( {} )", self.pretty_print(e))
@@ -75,6 +82,7 @@ impl Context {
                             .unwrap_or(format!("{}", other));
                         format!("{} == {}", var, other)
                     },
+                    Value::Free => format!("{} == [anything]", var),
                 }
             }
         }
