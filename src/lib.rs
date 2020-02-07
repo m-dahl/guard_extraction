@@ -439,6 +439,13 @@ impl<'a> BDDContext<'a> {
     }
 
     pub fn to_expr(&self, f: &BDD) -> Ex {
+        if f == &self.b.zero() {
+            return Ex::FALSE;
+        }
+        if f == &self.b.one() {
+            return Ex::TRUE;
+        }
+
         // make sure we respect the domains of our variables.
         let rd = self.respect_domains();
         let f = self.b.and(&f, &rd);
