@@ -148,9 +148,9 @@ fn main_mini(b: &buddy_rs::BDDManager) {
     let _imp = |a, b| Ex::OR(vec![not(a), b]);
     let _eq = |v, n| Ex::EQ(v, Value::InDomain(n));
 
-    let aeq = |v, n| Ac { var: v, val: Value::InDomain(n) };
+    let _aeq = |v, n| Ac { var: v, val: Value::InDomain(n) };
     let at = |v| Ac { var: v, val: Value::Bool(true) };
-    let an = |v| Ac { var: v, val: Value::Bool(false) };
+    let _an = |v| Ac { var: v, val: Value::Bool(false) };
 
     bc.c_trans("r1_to_at_d",
                not(v(r1_at_m)),
@@ -203,5 +203,5 @@ fn main() {
         let b = buddy_rs::take_manager(10000, 10000);
         main_buddy(&b);
         buddy_rs::return_manager(b);
-    }
+   }
 }

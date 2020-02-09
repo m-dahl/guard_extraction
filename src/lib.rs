@@ -10,6 +10,9 @@ pub use bdd_domain::*;
 mod context;
 pub use context::*;
 
+mod cubes;
+use cubes::*;
+
 // compute reachable states
 pub fn reach(bdd: &BDDManager, initial: &BDD,
              forward_trans: &BDD, vars: &BDD,
@@ -132,6 +135,15 @@ pub enum BDDVarType {
     Enum(BDDDomain)
 }
 
+impl BDDVarType {
+    pub fn size(&self) -> i32 {
+        match self {
+            BDDVarType::Bool => 2,
+            BDDVarType::Enum(dom) => dom.size,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BDDVar {
     pub orig_var_id: i32,
@@ -201,6 +213,7 @@ impl<'a> BDDContext<'a> {
                     let domain = BDDDomain::new(&b, n as i32, offset);
                     let var = BDDVar { orig_var_id: i as i32, bdd_var_id: bdd_id,
                                        var_type: BDDVarType::Enum(domain) };
+
                     offset += 2 * binsize;
                     vars.push(var);
                 }
@@ -422,8 +435,12 @@ impl<'a> BDDContext<'a> {
                     DomainCubeVal::Bool(false) => Some(Ex::NOT(Box::new(Ex::VAR(i)))),
                     DomainCubeVal::Bool(true) => Some(Ex::VAR(i)),
                     DomainCubeVal::Domain(vals) => {
+                        let domain_len = self.vars[i].var_type.size();
                         let e = if vals.len() == 1 {
                             Ex::EQ(i, Value::InDomain(vals[0] as usize))
+                        } else if (vals.len() as i32) == domain_len - 1 {
+                            let v = (0..domain_len).filter(|x| !vals.contains(x)).nth(0).unwrap();
+                            Ex::NOT(Box::new(Ex::EQ(i, Value::InDomain(v as usize))))
                         } else {
                             Ex::OR(vals.iter().map(|v| Ex::EQ(i, Value::InDomain(*v as usize))).collect())
                         };
@@ -446,22 +463,19 @@ impl<'a> BDDContext<'a> {
             return Ex::TRUE;
         }
 
-        // make sure we respect the domains of our variables.
-        let rd = self.respect_domains();
-        let f = self.b.and(&f, &rd);
         let cubes = self.b.allsat_vec(&f);
-
-        // transform these cubes back into their original definitions
+        let cubes: Vec<_> = cubes.into_iter().map(|c| { Cube(c) }).collect();
+        let cubes = CubeList::new().merge(&CubeList::from_list(&cubes));
 
         let mut domain_cubes = Vec::new();
 
-        for cube in &cubes {
+        for cube in cubes.cubes() {
             let mut new_cube = Vec::new();
             for v in &self.vars {
 
                 let res = match &v.var_type {
                     BDDVarType::Bool => {
-                        match cube[v.bdd_var_id as usize] {
+                        match cube.0[v.bdd_var_id as usize] {
                             Valuation::DontCare => DomainCubeVal::DontCare,
                             Valuation::True =>
                                 DomainCubeVal::Bool(true),
@@ -470,7 +484,7 @@ impl<'a> BDDContext<'a> {
                         }
                     },
                     BDDVarType::Enum(dom) => {
-                        let slice = &cube[(v.bdd_var_id) as usize ..(v.bdd_var_id+dom.binsize) as usize];
+                        let slice = &cube.0[(v.bdd_var_id) as usize ..(v.bdd_var_id+dom.binsize) as usize];
                         if slice.iter().all(|v| v == &Valuation::DontCare) {
                             DomainCubeVal::DontCare
                         } else {
@@ -693,7 +707,6 @@ impl<'a> BDDContext<'a> {
 
                 // println!("new guard computed in {}ms", now.elapsed().as_millis());
 
-
                 new_guards.insert(name.clone(), new_guard);
             }
         }
@@ -728,8 +741,6 @@ impl<'a> BDDContext<'a> {
             let bt = self.swap_normal_and_next(&temp);
 
             let y = self.b.and(&bad_states, &bt);
-            //let y = self.b.replace(&y, &self.next_to_normal);
-            //let y = self.b.and(&y, &good_states);
 
             if y == self.b.zero() {
                 let zz = self.b.and(&good_states, &temp);
@@ -738,6 +749,7 @@ impl<'a> BDDContext<'a> {
                 }
             }
         }
+
         // return the best we have
         new_guard
     }
