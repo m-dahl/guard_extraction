@@ -175,8 +175,7 @@ pub struct BDDContext<'a> {
 
     next_to_normal: BDDPair,
     normal_to_next: BDDPair,
-    next_to_temp: BDDPair,
-    temp_to_normal: BDDPair,
+    swap: BDDPair,
 
     normal_vars: BDD,
     next_vars: BDD,
@@ -194,7 +193,7 @@ impl<'a> BDDContext<'a> {
             match v.domain {
                 Domain::Bool => {
                     // add bdd variables
-                    b.ext_varnum(3); // we need a normal, next, and temp variable
+                    b.ext_varnum(2); // we need a normal and a next variable
                     let bdd_id = offset;
                     normal_vars.push(bdd_id);
                     next_vars.push(bdd_id + 1);
@@ -206,7 +205,7 @@ impl<'a> BDDContext<'a> {
                 Domain::Enum(n) => {
                     let binsize = BDDDomain::compute_binsize(n as i32);
                     // add bdd variables
-                    b.ext_varnum(3 * binsize); // normal, next, and temp variables
+                    b.ext_varnum(2 * binsize); // normal and next variables
                     let bdd_id = offset;
                     // TODO: domain vars should also preferably be interleaved
                     for i in 0..binsize {
@@ -229,29 +228,20 @@ impl<'a> BDDContext<'a> {
 
         let num_bdd_normal_vars = normal_vars.len() as i32;
 
-        let temp_offset = num_bdd_normal_vars * 2;
-        let temp_vars: Vec<_> = (temp_offset .. temp_offset + num_bdd_normal_vars).collect();
-
         let pairing: Vec<_> = normal_vars.iter().zip(next_vars.iter())
             .map(|(x, y)| (*x as i32, *y as i32)).collect();
 
+        let mut swap: Vec<(i32, i32)> = Vec::new();
+
         let next_to_normal: Vec<_> = pairing.iter().map(|(x,y)| (*y,*x)).collect();
+        swap.extend(next_to_normal.iter().cloned());
         let next_to_normal = b.make_pair(&next_to_normal);
 
         let normal_to_next: Vec<_> = pairing.iter().map(|(x,y)| (*x,*y)).collect();
+        swap.extend(normal_to_next.iter().cloned());
         let normal_to_next = b.make_pair(&normal_to_next);
 
-        let next_to_temp: Vec<_> = next_vars.iter()
-            .zip(temp_vars.iter())
-            .map(|(y, z)| (*y, *z))
-            .collect();
-        let next_to_temp = b.make_pair(&next_to_temp);
-
-        let temp_to_normal: Vec<_> = normal_vars.iter()
-            .zip(temp_vars.iter())
-            .map(|(y, z)| (*z, *y))
-            .collect();
-        let temp_to_normal = b.make_pair(&temp_to_normal);
+        let swap = b.make_pair(&swap);
 
         let normal_vars = b.make_set(&normal_vars);
         let next_vars = b.make_set(&next_vars);
@@ -266,8 +256,7 @@ impl<'a> BDDContext<'a> {
 
             next_to_normal,
             normal_to_next,
-            next_to_temp,
-            temp_to_normal,
+            swap,
 
             normal_vars,
             next_vars,
@@ -275,9 +264,7 @@ impl<'a> BDDContext<'a> {
     }
 
     fn swap_normal_and_next(&self, f: &BDD) -> BDD {
-        let nf = self.b.replace(&f, &self.next_to_temp);
-        let nf = self.b.replace(&nf, &self.normal_to_next);
-        self.b.replace(&nf, &self.temp_to_normal)
+        self.b.replace(&f, &self.swap)
     }
 
     pub fn from_expr(&mut self, e: &Ex) -> BDD {
@@ -719,8 +706,11 @@ impl<'a> BDDContext<'a> {
 
     pub fn compute_guards(&mut self, controllable: &BDD, bad: &BDD) -> HashMap<String, BDD> {
         let mut new_guards = HashMap::new();
-
+        // let now = std::time::Instant::now();
         for (name, trans) in &self.transitions {
+            // only need to check controllable transitions
+            if self.buc_transitions.contains_key(name) { continue };
+
             // compute the states from which we can reach a safe state as x
             let bt = self.swap_normal_and_next(&trans);
 
@@ -734,18 +724,14 @@ impl<'a> BDDContext<'a> {
             let z = self.b.and(&controllable, &xf);
 
             if y != z {
-                // let now = std::time::Instant::now();
-
                 // simplify out previous guard from new guard.
                 let orig_guard = self.b.exist(&trans, &self.next_vars);
                 let new_guard = self.b.simplify(&new_guard, &orig_guard);
                 let new_guard = self.compute_guard(&z, &new_guard,&trans,&controllable,&bad);
-
-                // println!("new guard computed in {}ms", now.elapsed().as_millis());
-
                 new_guards.insert(name.clone(), new_guard);
             }
         }
+        // println!("guards computed in {}ms", now.elapsed().as_millis());
 
         new_guards.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }
