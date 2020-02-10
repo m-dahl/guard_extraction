@@ -13,6 +13,12 @@ pub use context::*;
 mod cubes;
 use cubes::*;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExprType {
+    DNF,
+    CNF,
+}
+
 // compute reachable states
 pub fn reach(bdd: &BDDManager, initial: &BDD,
              forward_trans: &BDD, vars: &BDD,
@@ -427,8 +433,8 @@ impl<'a> BDDContext<'a> {
         }
     }
 
-    fn domain_cubes_to_ex(&self, cubes: &[Vec<DomainCubeVal>]) -> Ex {
-        let sums = cubes.iter().map(|c| {
+    fn domain_cubes_to_ex(&self, cubes: &[Vec<DomainCubeVal>], t: ExprType) -> Ex {
+        let parts = cubes.iter().map(|c| {
             let e = c.iter().enumerate().flat_map(|(i, v) | {
                 match v {
                     DomainCubeVal::DontCare => None,
@@ -449,13 +455,19 @@ impl<'a> BDDContext<'a> {
 
                 }
             }).collect();
-            Ex::AND(e)
+            match t {
+                ExprType::DNF => Ex::AND(e),
+                ExprType::CNF => Ex::OR(e),
+            }
         }).collect();
 
-        Ex::OR(sums)
+        match t {
+            ExprType::DNF => Ex::OR(parts),
+            ExprType::CNF => Ex::AND(parts),
+        }
     }
 
-    pub fn to_expr(&self, f: &BDD) -> Ex {
+    pub fn to_expr(&self, f: &BDD, t: ExprType) -> Ex {
         if f == &self.b.zero() {
             return Ex::FALSE;
         }
@@ -463,6 +475,10 @@ impl<'a> BDDContext<'a> {
             return Ex::TRUE;
         }
 
+        let f = match t {
+            ExprType::DNF => f.clone(),
+            ExprType::CNF => self.b.not(&f),
+        };
         let cubes = self.b.allsat_vec(&f);
         let cubes: Vec<_> = cubes.into_iter().map(|c| { Cube(c) }).collect();
         let cubes = CubeList::new().merge(&CubeList::from_list(&cubes));
@@ -475,12 +491,14 @@ impl<'a> BDDContext<'a> {
 
                 let res = match &v.var_type {
                     BDDVarType::Bool => {
-                        match cube.0[v.bdd_var_id as usize] {
-                            Valuation::DontCare => DomainCubeVal::DontCare,
-                            Valuation::True =>
-                                DomainCubeVal::Bool(true),
-                            Valuation::False =>
-                                DomainCubeVal::Bool(false),
+                        match (&cube.0[v.bdd_var_id as usize], &t) {
+                            (Valuation::False, ExprType::DNF) => DomainCubeVal::Bool(false),
+                            (Valuation::False, ExprType::CNF) => DomainCubeVal::Bool(true),
+
+                            (Valuation::True, ExprType::DNF) => DomainCubeVal::Bool(true),
+                            (Valuation::True, ExprType::CNF) => DomainCubeVal::Bool(false),
+
+                            (Valuation::DontCare, _) => DomainCubeVal::DontCare,
                         }
                     },
                     BDDVarType::Enum(dom) => {
@@ -489,24 +507,43 @@ impl<'a> BDDContext<'a> {
                             DomainCubeVal::DontCare
                         } else {
                             // build expression in cube, check which digits it matches
-                            let mut allowed = self.b.one();
+                            let mut d = match t {
+                                ExprType::DNF => self.b.one(),
+                                ExprType::CNF => self.b.zero(),
+                            };
 
                             slice.iter().enumerate().for_each(|(i, val)| match val {
                                 Valuation::DontCare => {},
                                 Valuation::True => {
-                                    let t = self.b.ithvar(v.bdd_var_id+i as i32);
-                                    allowed = self.b.and(&allowed, &t);
+                                    match t {
+                                        ExprType::DNF => {
+                                            let t = self.b.ithvar(v.bdd_var_id+i as i32);
+                                            d = self.b.and(&d, &t);
+                                        },
+                                        ExprType::CNF => {
+                                            let t = self.b.nithvar(v.bdd_var_id+i as i32);
+                                            d = self.b.or(&d, &t);
+                                        }
+                                    }
                                 },
                                 Valuation::False => {
-                                    let f = self.b.nithvar(v.bdd_var_id+i as i32);
-                                    allowed = self.b.and(&allowed, &f);
+                                    match t {
+                                        ExprType::DNF => {
+                                            let t = self.b.nithvar(v.bdd_var_id+i as i32);
+                                            d = self.b.and(&d, &t);
+                                        },
+                                        ExprType::CNF => {
+                                            let t = self.b.ithvar(v.bdd_var_id+i as i32);
+                                            d = self.b.or(&d, &t);
+                                        }
+                                    }
                                 },
                             });
 
-                            let allowed = dom.allowed_values(&self.b, &allowed);
+                            let d = dom.allowed_values(&self.b, &d);
 
-                            assert!(allowed.len() > 0);
-                            DomainCubeVal::Domain(allowed)
+                            assert!(d.len() > 0);
+                            DomainCubeVal::Domain(d)
                         }
                     }
                 };
@@ -517,9 +554,8 @@ impl<'a> BDDContext<'a> {
 
         // TODO: here we should merge cubes that only differ w.r.t. enum variables.
         // eg. (x1 & v = 2) | (x1 & v = 3) should be merged to (x1 & v in [2,3])
-        // additionally, if dom(v) = [1,2,3], the cube should be simplified to (x1 & v != 1])
 
-        self.domain_cubes_to_ex(&domain_cubes)
+        self.domain_cubes_to_ex(&domain_cubes, t)
     }
 
     fn make_trans_free(&mut self, guard: &BDD, action: &BDD, free: &[i32]) -> BDD {
@@ -681,7 +717,7 @@ impl<'a> BDDContext<'a> {
     }
 
 
-    pub fn compute_guards(&mut self, controllable: &BDD, bad: &BDD) -> HashMap<String, Ex> {
+    pub fn compute_guards(&mut self, controllable: &BDD, bad: &BDD) -> HashMap<String, BDD> {
         let mut new_guards = HashMap::new();
 
         for (name, trans) in &self.transitions {
@@ -711,7 +747,7 @@ impl<'a> BDDContext<'a> {
             }
         }
 
-        new_guards.iter().map(|(k, v)| (k.clone(), self.to_expr(v))).collect()
+        new_guards.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }
 
 

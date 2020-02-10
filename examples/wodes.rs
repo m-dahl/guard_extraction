@@ -112,7 +112,8 @@ fn main_buddy(b: &buddy_rs::BDDManager) {
 
     println!("\n");
     for (trans, guard) in &new_guards {
-        let s = c.pretty_print(&guard);
+        let e = bc.to_expr(guard, ExprType::DNF);
+        let s = c.pretty_print(&e);
         println!("NEW GUARD FOR {}: {}", trans, s);
         println!("\n");
     }
@@ -189,7 +190,8 @@ fn main_mini(b: &buddy_rs::BDDManager) {
     let new_guards = bc.compute_guards(&controllable, &bad);
 
     for (trans, guard) in &new_guards {
-        let s = c.pretty_print(&guard);
+        let e = bc.to_expr(guard, ExprType::DNF);
+        let s = c.pretty_print(&e);
         println!("NEW GUARD FOR {}: {}", trans, s);
     }
 }
