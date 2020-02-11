@@ -1,4 +1,6 @@
 use itertools::Itertools;
+use std::collections::HashMap;
+use crate::bdd_context::{BDDContext, ExprType};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ex {
@@ -30,14 +32,22 @@ pub enum Domain {
     Enum(usize)
 }
 
-pub struct Var {
+pub (crate) struct Var {
     pub name: String,
     pub domain: Domain,
 }
 
+pub (crate) struct Trans {
+    pub (crate) name: String,
+    pub (crate) guard: Ex,
+    pub (crate) actions: Vec<Ac>,
+}
+
 #[derive(Default)]
 pub struct Context {
-    pub vars: Vec<Var>,
+    pub (crate) vars: Vec<Var>,
+    pub (crate) c_trans: Vec<Trans>,
+    pub (crate) uc_trans: Vec<Trans>,
 }
 
 impl Context {
@@ -53,6 +63,14 @@ impl Context {
     pub fn add_enum(&mut self, name: &str, domain: usize) -> usize {
         self.vars.push(Var { name: name.to_owned(), domain: Domain::Enum(domain) });
         self.vars.len() - 1
+    }
+
+    pub fn add_c_trans(&mut self, name: &str, guard: &Ex, actions: &[Ac]) {
+        self.c_trans.push(Trans { name: name.into(), guard: guard.clone(), actions: actions.to_vec() });
+    }
+
+    pub fn add_uc_trans(&mut self, name: &str, guard: &Ex, actions: &[Ac]) {
+        self.uc_trans.push(Trans { name: name.into(), guard: guard.clone(), actions: actions.to_vec() });
     }
 
     pub fn pretty_print(&self, expr: &Ex) -> String {
@@ -86,5 +104,55 @@ impl Context {
                 }
             }
         }
+    }
+
+    pub fn compute_guards(&self, initial: &Ex, forbidden: &Ex) -> (HashMap<String, Ex>, Ex) {
+        let b = buddy_rs::take_manager(10000, 10000);
+        let mut bc = BDDContext::from(&self, &b);
+
+        let forbidden = bc.from_expr(&forbidden);
+        let initial = bc.from_expr(&initial);
+        let (_reachable, bad, controllable) = bc.controllable(&initial, &forbidden);
+
+        let new_guards = bc.compute_guards(&controllable, &bad);
+
+        let supervisor = bc.to_expr(&controllable, ExprType::DNF);
+
+        let new_guards = new_guards.into_iter()
+            .map(|(name,guard)| {
+                let dnf = bc.to_expr(&guard, ExprType::DNF);
+                let cnf = bc.to_expr(&guard, ExprType::CNF);
+                let dnf_size = self.pretty_print(&dnf).len();
+                let cnf_size = self.pretty_print(&cnf).len();
+                let guard = if cnf_size < dnf_size {
+                    cnf
+                } else {
+                    dnf
+                };
+                (name, guard)
+            }).collect();
+
+
+        // must drop the context first to release the sets and pairs
+        drop(bc);
+        buddy_rs::return_manager(b);
+
+        (new_guards, supervisor)
+    }
+
+    pub fn extend_forbidden(&self, forbidden: &Ex) -> Ex {
+        let b = buddy_rs::take_manager(10000, 10000);
+        let mut bc = BDDContext::from(&self, &b);
+
+        let forbidden = bc.from_expr(&forbidden);
+
+        let new_forbidden = bc.extend_forbidden(&forbidden);
+        let new_forbidden = bc.to_expr(&new_forbidden, ExprType::DNF);
+
+        // must drop the context first to release the sets and pairs
+        drop(bc);
+        buddy_rs::return_manager(b);
+
+        new_forbidden
     }
 }

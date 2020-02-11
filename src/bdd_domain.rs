@@ -47,10 +47,6 @@ impl BDDDomain {
         }
     }
 
-    pub fn belongs(&self, terminal: BDDVar) -> bool {
-        terminal >= self.offset && terminal < self.offset + self.binsize
-    }
-
     // check if domain accepts "d"
     pub fn digit(&self, b: &BDDManager, d: i32) -> BDD {
         let mut val = d;
@@ -78,10 +74,6 @@ impl BDDDomain {
             }
         }
         res
-    }
-
-    pub fn domain_bdd(&self) -> BDD {
-        self.dom.clone()
     }
 
     pub fn equals(&self, b: &BDDManager, other: &BDDDomain) -> BDD {
