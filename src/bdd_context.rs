@@ -32,6 +32,27 @@ fn reach(bdd: &BDDManager, initial: &BDD,
     r
 }
 
+fn reach2(bdd: &BDDManager, initial: &BDD,
+          forward_trans: &HashMap<usize, Ts>) -> BDD {
+    let mut r = initial.clone();
+
+    loop {
+        let old = r.clone();
+
+        for t in forward_trans.values() {
+            let new = bdd.relprod(&old, &t.f, &t.vars);
+            let new = bdd.replace(&new, &t.next_to_normal);
+            r = bdd.or(&old, &new);
+        }
+
+        if old == r {
+            break;
+        }
+    }
+    r
+}
+
+
 // compute controllability and return the forbidden states
 fn ctrl(
     bdd: &BDDManager, forbidden: &BDD,
@@ -146,6 +167,13 @@ impl BDDVarType {
             BDDVarType::Enum(dom) => dom.size,
         }
     }
+
+    fn binsize(&self) -> i32 {
+        match self {
+            BDDVarType::Bool => 1,
+            BDDVarType::Enum(dom) => dom.binsize,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +190,13 @@ enum DomainCubeVal {
     Domain(Vec<i32>),
 }
 
+struct Ts {
+    f: BDD,
+    var: usize,
+    vars: BDD,
+    next_to_normal: BDDPair,
+}
+
 pub struct BDDContext<'a> {
     b: &'a BDDManager,
     vars: Vec<BDDVar>,
@@ -169,6 +204,8 @@ pub struct BDDContext<'a> {
     transitions: HashMap<String, BDD>,
     uc_transitions: HashMap<String, BDD>,
     buc_transitions: HashMap<String, BDD>,
+
+    disj_transitions: HashMap<usize, Ts>,
 
     next_to_normal: BDDPair,
     normal_to_next: BDDPair,
@@ -249,6 +286,8 @@ impl<'a> BDDContext<'a> {
             uc_transitions: HashMap::new(),
             buc_transitions: HashMap::new(),
 
+            disj_transitions: HashMap::new(),
+
             next_to_normal,
             normal_to_next,
             swap,
@@ -259,11 +298,28 @@ impl<'a> BDDContext<'a> {
 
         // now add all transitions.
         for ct in &c.c_trans {
+            bc.trans2(&ct.name, &ct.guard, &ct.actions);
             bc.c_trans(&ct.name, &ct.guard, &ct.actions);
         }
         for uct in &c.uc_trans {
+            bc.trans2(&uct.name, &uct.guard, &uct.actions);
             bc.uc_trans(&uct.name, &uct.guard, &uct.actions);
         }
+
+        let mut ft = bc.b.zero();
+        for t in bc.transitions.values() {
+            ft = bc.b.or(&ft, t);
+        }
+        println!("ft is: {:?}", ft);
+        let mut ft2 = bc.b.zero();
+        for t in bc.disj_transitions.values() {
+
+            let clauses = bc.clauses_from_bdd(&t.f);
+            println!("XX clauses in single transition: {}", clauses.len());
+
+            ft2 = bc.b.or(&ft, &t.f);
+        }
+        println!("ft2 is: {:?}", ft2);
 
         bc
     }
@@ -624,6 +680,35 @@ impl<'a> BDDContext<'a> {
         self.transitions.insert(name.into(), f);
     }
 
+    fn trans2(&mut self, name: &str, guard: &Ex, actions: &[Ac]) {
+        let g = self.from_expr(guard);
+        for a in actions {
+            let (action_bdd,_f) = self.from_ac(&a);
+            let trans = self.b.and(&g, &action_bdd);
+
+            use std::collections::hash_map::Entry;
+            let c = match self.disj_transitions.entry(a.var) {
+                Entry::Vacant(entry) => {
+                    let var = self.vars.iter().find(|x|x.orig_var_id == a.var as i32).unwrap();
+                    let binsize = var.var_type.binsize();
+                    let vars: Vec<i32> = (0..binsize).map(|v| v as i32 + var.bdd_var_id).collect();
+                    let vars = self.b.make_set(&vars);
+                    let next_to_normal: Vec<(i32,i32)> = (0..binsize).map(|v| (v as i32 + var.bdd_var_id + binsize, v as i32 + var.bdd_var_id)).collect();
+                    let pair = self.b.make_pair(&next_to_normal);
+
+                    entry.insert(Ts {
+                        f: self.b.zero(),
+                        next_to_normal: pair,
+                        vars: vars,
+                        var: a.var
+                    })
+                },
+                Entry::Occupied(entry) => entry.into_mut(),
+            };
+            c.f = self.b.or(&c.f, &trans);
+        }
+    }
+
     fn uc_trans(&mut self, name: &str, guard: &Ex, actions: &[Ac]) {
         let g = self.from_expr(guard);
         let mut free = Vec::new();
@@ -700,6 +785,8 @@ impl<'a> BDDContext<'a> {
     pub fn model_as_satmodel(&self, init: &BDD, goal: &BDD) -> SATModel {
         let mut ft = self.b.zero();
         for t in self.transitions.values() {
+            let clauses = self.clauses_from_bdd(&t);
+            println!("clauses in single transition: {}", clauses.len());
             ft = self.b.or(&ft, t);
         }
         let now = std::time::Instant::now();
@@ -743,9 +830,16 @@ impl<'a> BDDContext<'a> {
         let now = std::time::Instant::now();
 
         let r = reach(&self.b, &initial, &ft, &self.normal_vars, &self.next_to_normal);
-        println!("Reachable states computed in: {}ms\n", now.elapsed().as_millis());
+        println!("Reachable states computed in: {}ms\n", now.elapsed().as_micros());
+        let now = std::time::Instant::now();
+        let r2 = reach2(&self.b, &initial, &self.disj_transitions);
+        println!("Reachable states2 computed in: {}ms\n", now.elapsed().as_micros());
+
         let sat = self.b.satcount_set(&r, &self.normal_vars);
         println!("Numer of reachable: {}\n", sat);
+
+        let sat = self.b.satcount_set(&r2, &self.normal_vars);
+        println!("Numer of reachable2: {}\n", sat);
 
         // uncontrollable backwards
         let mut ub = self.b.zero();
