@@ -50,6 +50,21 @@ pub struct Context {
     pub (crate) uc_trans: Vec<Trans>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Clause {
+    pub lits: Vec<usize>, // cubes where 0 = false, 1 = true, 2 = dontcare
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SATModel {
+    pub num_vars: usize,
+    pub model_clauses: Vec<Clause>,
+    pub norm_vars: Vec<usize>,
+    pub next_vars: Vec<usize>,
+    pub init: Vec<Clause>,
+    pub goal: Vec<Clause>,
+}
+
 impl Context {
     pub fn get_var(&self, name: &str) -> usize {
         self.vars.iter().position(|v| v.name == name).unwrap()
@@ -104,6 +119,20 @@ impl Context {
                 }
             }
         }
+    }
+
+    pub fn model_as_sat_model(&self, init: &Ex, goal: &Ex) -> SATModel {
+        let b = buddy_rs::take_manager(10000, 10000);
+        let mut bc = BDDContext::from(&self, &b);
+
+        let init = bc.from_expr(&init);
+        let goal = bc.from_expr(&goal);
+
+        let model = bc.model_as_satmodel(&init, &goal);
+
+        drop(bc);
+        buddy_rs::return_manager(b);
+        model
     }
 
     pub fn compute_guards(&self, initial: &Ex, forbidden: &Ex) -> (HashMap<String, Ex>, Ex) {

@@ -668,6 +668,66 @@ impl<'a> BDDContext<'a> {
         c
     }
 
+    fn clauses_from_bdd(&self, f: &BDD) -> Vec<Clause> {
+        // negate the relation to build our clauses
+        let f = self.b.not(&f);
+
+        let now = std::time::Instant::now();
+        let cubes = self.b.allsat_vec(&f);
+        println!("allsat computed in {}ms", now.elapsed().as_millis());
+
+        let mut clauses = Vec::new();
+        let cubes: Vec<_> = cubes.into_iter().map(|c| { Cube(c) }).collect();
+        let cubes = CubeList::new().merge(&CubeList::from_list(&cubes));
+
+        for cube in cubes.cubes() {
+            let mut lits = Vec::new();
+            for v in &cube.0 {
+                let v = match v {
+                    // negate the values again here to go from dnf to cnf
+                    Valuation::False    => 1, // true
+                    Valuation::True     => 0, // false
+                    Valuation::DontCare => 2, // dc
+                };
+                lits.push(v);
+            }
+            clauses.push(Clause { lits });
+        }
+
+        clauses
+    }
+
+    pub fn model_as_satmodel(&self, init: &BDD, goal: &BDD) -> SATModel {
+        let mut ft = self.b.zero();
+        for t in self.transitions.values() {
+            ft = self.b.or(&ft, t);
+        }
+        let now = std::time::Instant::now();
+        let mut clauses = self.clauses_from_bdd(&ft);
+        println!("num clauses for transition relation {}", clauses.len());
+        println!("computed in {}ms", now.elapsed().as_millis());
+
+        let rd = self.respect_domains();
+        let rd_c = self.clauses_from_bdd(&rd);
+
+        clauses.extend(rd_c);
+
+        let init_clauses = self.clauses_from_bdd(&init);
+        let goal_clauses = self.clauses_from_bdd(&goal);
+
+        let norm_vars: Vec<usize> = self.b.scan_set(&self.normal_vars).iter().map(|a|*a as usize).collect();
+        let next_vars: Vec<usize> = self.b.scan_set(&self.next_vars).iter().map(|a|*a as usize).collect();
+
+        SATModel {
+            num_vars: norm_vars.len() + next_vars.len(),
+            model_clauses: clauses,
+            norm_vars,
+            next_vars,
+            init: init_clauses,
+            goal: goal_clauses,
+        }
+    }
+
     pub fn controllable(&self, initial: &BDD, forbidden: &BDD) -> (BDD, BDD, BDD) {
         let mut ft = self.b.zero();
         for t in self.transitions.values() {
