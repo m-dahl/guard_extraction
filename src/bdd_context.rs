@@ -314,8 +314,8 @@ impl<'a> BDDContext<'a> {
         let mut ft2 = bc.b.zero();
         for t in bc.disj_transitions.values() {
 
-            let clauses = bc.clauses_from_bdd(&t.f);
-            println!("XX clauses in single transition: {}", clauses.len());
+            // let clauses = bc.clauses_from_bdd(&t.f);
+            // println!("XX clauses in single transition: {}", clauses.len());
 
             ft2 = bc.b.or(&ft, &t.f);
         }
@@ -753,65 +753,118 @@ impl<'a> BDDContext<'a> {
         c
     }
 
-    fn clauses_from_bdd(&self, f: &BDD) -> Vec<Clause> {
-        // negate the relation to build our clauses
-        let f = self.b.not(&f);
+    // fn clauses_from_bdd(&self, f: &BDD) -> Vec<Clause> {
+    //     // negate the relation to build our clauses
+    //     let f = self.b.not(&f);
 
-        let now = std::time::Instant::now();
-        let cubes = self.b.allsat_vec(&f);
-        println!("allsat computed in {}ms", now.elapsed().as_millis());
+    //     let now = std::time::Instant::now();
+    //     let cubes = self.b.allsat_vec(&f);
+    //     println!("allsat computed in {}ms", now.elapsed().as_millis());
 
-        let mut clauses = Vec::new();
-        let cubes: Vec<_> = cubes.into_iter().map(|c| { Cube(c) }).collect();
-        let cubes = CubeList::new().merge(&CubeList::from_list(&cubes));
+    //     let mut clauses = Vec::new();
+    //     let cubes: Vec<_> = cubes.into_iter().map(|c| { Cube(c) }).collect();
+    //     let cubes = CubeList::new().merge(&CubeList::from_list(&cubes));
 
-        for cube in cubes.cubes() {
-            let mut lits = Vec::new();
-            for v in &cube.0 {
-                let v = match v {
-                    // negate the values again here to go from dnf to cnf
-                    Valuation::False    => 1, // true
-                    Valuation::True     => 0, // false
-                    Valuation::DontCare => 2, // dc
-                };
-                lits.push(v);
-            }
-            clauses.push(Clause { lits });
-        }
+    //     for cube in cubes.cubes() {
+    //         let mut lits = Vec::new();
+    //         for v in &cube.0 {
+    //             let v = match v {
+    //                 // negate the values again here to go from dnf to cnf
+    //                 Valuation::False    => 1, // true
+    //                 Valuation::True     => 0, // false
+    //                 Valuation::DontCare => 2, // dc
+    //             };
+    //             lits.push(v);
+    //         }
+    //         clauses.push(Clause { lits });
+    //     }
 
-        clauses
-    }
+    //     clauses
+    // }
 
-    pub fn model_as_satmodel(&self, init: &BDD, goal: &BDD) -> SATModel {
+    // pub fn model_as_satmodel(&self, init: &BDD, goal: &BDD) -> SATModel {
+    //     let norm_vars: Vec<usize> = self.b.scan_set(&self.normal_vars).iter().map(|a|*a as usize).collect();
+    //     let next_vars: Vec<usize> = self.b.scan_set(&self.next_vars).iter().map(|a|*a as usize).collect();
+
+    //     let mut ft = self.b.zero();
+    //     for t in self.transitions.values() {
+    //         let now = std::time::Instant::now();
+    //         let clauses = self.clauses_from_bdd(&t);
+    //         println!("clauses in single transition: {}", clauses.len());
+    //         println!("computed in {}ms", now.elapsed().as_millis());
+    //         ft = self.b.or(&ft, t);
+    //     }
+    //     let now = std::time::Instant::now();
+    //     let mut clauses = self.clauses_from_bdd(&ft);
+    //     println!("num clauses for transition relation {}", clauses.len());
+    //     println!("computed in {}ms", now.elapsed().as_millis());
+
+    //     let rd = self.respect_domains();
+    //     let rd_c = self.clauses_from_bdd(&rd);
+
+    //     clauses.extend(rd_c);
+
+    //     let init_clauses = self.clauses_from_bdd(&init);
+    //     let goal_clauses = self.clauses_from_bdd(&goal);
+
+
+    //     SATModel {
+    //         num_vars: norm_vars.len() + next_vars.len(),
+    //         model_clauses: clauses,
+    //         norm_vars,
+    //         next_vars,
+    //         init: init_clauses,
+    //         goal: goal_clauses,
+    //     }
+    // }
+
+    pub fn model_as_satmodel(&self, init: &BDD, goals: &[BDD]) -> SATModel {
+        let norm_vars: Vec<usize> = self.b.scan_set(&self.normal_vars).iter().map(|a|*a as usize).collect();
+        let next_vars: Vec<usize> = self.b.scan_set(&self.next_vars).iter().map(|a|*a as usize).collect();
+        let num_vars = norm_vars.len() + next_vars.len();
+
         let mut ft = self.b.zero();
         for t in self.transitions.values() {
-            let clauses = self.clauses_from_bdd(&t);
-            println!("clauses in single transition: {}", clauses.len());
             ft = self.b.or(&ft, t);
         }
         let now = std::time::Instant::now();
-        let mut clauses = self.clauses_from_bdd(&ft);
+        let (mut clauses, added1) = to_cnf_tseitsin(&self.b, &ft, num_vars + 0);
         println!("num clauses for transition relation {}", clauses.len());
         println!("computed in {}ms", now.elapsed().as_millis());
 
         let rd = self.respect_domains();
-        let rd_c = self.clauses_from_bdd(&rd);
+        let (rd_c, added2) = to_cnf_tseitsin(&self.b, &rd, num_vars + added1);
 
         clauses.extend(rd_c);
 
-        let init_clauses = self.clauses_from_bdd(&init);
-        let goal_clauses = self.clauses_from_bdd(&goal);
+        let (init_clauses, added3) = to_cnf_tseitsin(&self.b, &init, num_vars + added1 + added2);
 
-        let norm_vars: Vec<usize> = self.b.scan_set(&self.normal_vars).iter().map(|a|*a as usize).collect();
-        let next_vars: Vec<usize> = self.b.scan_set(&self.next_vars).iter().map(|a|*a as usize).collect();
+        // goal(s)
+        let mut goal_added = 0;
+        let mut goal_clauses = Vec::new();
+        let mut goal_tops = Vec::new();
+        for goal in goals {
+            let (new_goal_clauses, added) = to_cnf_tseitsin(&self.b, goal, num_vars + added1 + added2 + added3 + goal_added);
+            goal_added += added;
+            let top = new_goal_clauses.last().unwrap().0.first().unwrap().clone(); // "top" variable, defining whether the bdd is true
+            println!("TOP VAR IS: {:?}", top);
+            goal_tops.push(top);
+            //goal_clauses.extend(new_goal_clauses.into_iter());
+            // we add the necessary clauses, EXCEPT, the clause representing the root of the bdd.
+            // this one we instead put in a big disjunction allowing us to finish goals as different time steps.
+            goal_clauses.extend(new_goal_clauses[0..new_goal_clauses.len()-1].iter().cloned());
+        }
+
+        println!("num aux variables {}", added1 + added2 + added3 + goal_added);
 
         SATModel {
-            num_vars: norm_vars.len() + next_vars.len(),
+            num_vars: num_vars + added1 + added2 + added3 + goal_added,
             model_clauses: clauses,
             norm_vars,
             next_vars,
-            init: init_clauses,
-            goal: goal_clauses,
+            init_clauses: init_clauses,
+            goal_clauses: goal_clauses,
+            goal_tops: goal_tops,
         }
     }
 
@@ -1007,4 +1060,154 @@ fn ps_test() {
 
     assert!(x[0] == vec![1]);
     assert!(x[x.len()-1] == vec![1,2,3,4]);
+}
+
+
+#[derive(Debug, Clone, PartialEq)]
+struct Lit2 {
+    var: usize, // variable index
+    neg: bool, // negated?
+    new: bool, // is this a new variable (i.e. tseitsin var)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Clause2(Vec<Lit2>);
+
+fn to_cnf_tseitsin(b: &BDDManager, f: &BDD, tseitsin_offset: usize) -> (Vec<Clause>, usize) {
+    // we want to generate the following clauses for each
+    // node x hi low
+    // x & hi -> v     => -x V -hi V v
+    // x & -hi -> -v   => -x V hi V -v
+    // -x & lo -> v    => x V -lo V v
+    // -x & -lo -> -v  => x V lo V -v
+    // hi & lo -> v    => -hi V -lo V v
+    // -hi & -lo -> v  => hi V lo v -v
+    // ONE -> v_one
+    // ZERO -> -v_zero
+    // bdd (top) -> p (i.e. the bdd must be true)
+
+    let mut clauses = Vec::new();
+    let mut visited = Vec::new();
+
+    fn rec(b: &BDDManager, f: &BDD, clauses: &mut Vec<Clause2>, visited: &mut Vec<usize>) {
+        if f == &b.zero() || f == &b.one() {
+            // done!
+            return;
+        }
+        let node = f.node_index() as usize;
+        if visited.contains(&node) {
+            return;
+        } else {
+            visited.push(node);
+        }
+
+        let var = f.var() as usize;
+        let node_lo = f.low().node_index() as usize;
+        let node_hi = f.high().node_index() as usize;
+
+        let c1 = Clause2(vec![ Lit2 { var: var, neg: true, new: false },
+                               Lit2 { var: node_hi, neg: true, new: true },
+                               Lit2 { var: node, neg: false, new: true }, ]);
+        let c2 = Clause2(vec![ Lit2 { var: var, neg: true, new: false },
+                               Lit2 { var: node_hi, neg: false, new: true },
+                               Lit2 { var: node, neg: true, new: true }, ]);
+        let c3 = Clause2(vec![ Lit2 { var: var, neg: false, new: false },
+                               Lit2 { var: node_lo, neg: true, new: true },
+                               Lit2 { var: node, neg: false, new: true }, ]);
+        let c4 = Clause2(vec![ Lit2 { var: var, neg: false, new: false },
+                               Lit2 { var: node_lo, neg: false, new: true },
+                               Lit2 { var: node, neg: true, new: true }, ]);
+        let c5 = Clause2(vec![ Lit2 { var: node_hi, neg: true, new: true },
+                               Lit2 { var: node_lo, neg: true, new: true },
+                               Lit2 { var: node, neg: false, new: true }, ]);
+        let c6 = Clause2(vec![ Lit2 { var: node_hi, neg: false, new: true },
+                               Lit2 { var: node_lo, neg: false, new: true },
+                               Lit2 { var: node, neg: true, new: true }, ]);
+
+        clauses.push(c1);
+        clauses.push(c2);
+        clauses.push(c3);
+        clauses.push(c4);
+        clauses.push(c5);
+        clauses.push(c6);
+
+
+        rec(&b, &f.low(), clauses, visited);
+        rec(&b, &f.high(), clauses, visited);
+    }
+
+    rec(&b, &f, &mut clauses, &mut visited);
+
+    let one = Clause2(vec![ Lit2 { var: 1, neg: false, new: true } ]);
+    let zero = Clause2(vec![ Lit2 { var: 0, neg: true, new: true } ]);
+    let top = Clause2(vec![ Lit2 { var: f.node_index() as usize, neg: false, new: true } ]);
+
+    clauses.push(one);
+    clauses.push(zero);
+    clauses.push(top);
+
+    // rewrite into clauses where tseitsin vars are appended to the end (after "offset")
+    let mut new_vars: Vec<usize> = clauses.iter().flat_map(|c| {
+        let inner: Vec<usize> =
+            c.0.iter().filter_map(|l| {
+                if l.new { Some(l.var) } else { None } }).collect();
+        inner
+    }).collect();
+
+    new_vars.sort();
+    new_vars.dedup();
+
+    let num_new_vars = new_vars.len();
+
+    let mut fixed_clauses: Vec<Clause> = Vec::new();
+
+    for c in clauses {
+        let lits: Vec<Lit> = c.0.iter().map(|l| {
+            let var = if l.new {
+                tseitsin_offset + new_vars.iter().position(|&x|x==l.var).unwrap()
+            } else {
+                l.var
+            };
+            Lit { var: var, neg: l.neg }
+        }).collect();
+        fixed_clauses.push(Clause(lits));
+    }
+
+    return (fixed_clauses, num_new_vars);
+}
+
+#[test]
+fn test_to_cnf_tseitsin() {
+
+    let b = buddy_rs::take_manager(10000, 10000);
+    b.set_varnum(3);
+
+    let x = b.ithvar(0);
+    let y = b.ithvar(1);
+    let z = b.ithvar(2);
+
+    // x & (y | z)
+    let yz = b.or(&y, &z);
+    let xyz = b.and(&x, &yz);
+
+
+    let (clauses, added) = to_cnf_tseitsin(&b, &xyz, b.get_varnum() as usize);
+
+    println!("added {} new variables", added);
+    clauses.iter().for_each(|c| {
+        println!("clause {:?}", c);
+    });
+
+    let xyz2 = b.not(&xyz);
+
+    let (clauses, added) = to_cnf_tseitsin(&b, &xyz2, b.get_varnum() as usize + added);
+
+    println!("added {} new variables", added);
+    clauses.iter().for_each(|c| {
+        println!("clause {:?}", c);
+    });
+
+    buddy_rs::return_manager(b);
+
+    assert!(false);
 }

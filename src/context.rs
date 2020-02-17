@@ -51,9 +51,13 @@ pub struct Context {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Clause {
-    pub lits: Vec<usize>, // cubes where 0 = false, 1 = true, 2 = dontcare
+pub struct Lit {
+    pub var: usize, // variable index
+    pub neg: bool,  // negated?
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Clause(pub Vec<Lit>);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SATModel {
@@ -61,8 +65,9 @@ pub struct SATModel {
     pub model_clauses: Vec<Clause>,
     pub norm_vars: Vec<usize>,
     pub next_vars: Vec<usize>,
-    pub init: Vec<Clause>,
-    pub goal: Vec<Clause>,
+    pub init_clauses: Vec<Clause>,
+    pub goal_clauses: Vec<Clause>,
+    pub goal_tops: Vec<Lit>,
 }
 
 impl Context {
@@ -121,14 +126,15 @@ impl Context {
         }
     }
 
-    pub fn model_as_sat_model(&self, init: &Ex, goal: &Ex) -> SATModel {
+    pub fn model_as_sat_model(&self, init: &Ex, goals: &[Ex]) -> SATModel {
         let b = buddy_rs::take_manager(10000, 10000);
         let mut bc = BDDContext::from(&self, &b);
 
         let init = bc.from_expr(&init);
-        let goal = bc.from_expr(&goal);
 
-        let model = bc.model_as_satmodel(&init, &goal);
+        let goals: Vec<buddy_rs::BDD> = goals.iter().map(|g|bc.from_expr(&g)).collect();
+
+        let model = bc.model_as_satmodel(&init, &goals);
 
         drop(bc);
         buddy_rs::return_manager(b);
