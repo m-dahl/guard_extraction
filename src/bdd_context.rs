@@ -818,7 +818,7 @@ impl<'a> BDDContext<'a> {
     //     }
     // }
 
-    pub fn model_as_satmodel(&self, init: &BDD, goals: &[BDD]) -> SATModel {
+    pub fn model_as_satmodel(&self, init: &BDD, invar_goals: &[(BDD,BDD)]) -> SATModel {
         let norm_vars: Vec<usize> = self.b.scan_set(&self.normal_vars).iter().map(|a|*a as usize).collect();
         let next_vars: Vec<usize> = self.b.scan_set(&self.next_vars).iter().map(|a|*a as usize).collect();
         let num_vars = norm_vars.len() + next_vars.len();
@@ -843,7 +843,10 @@ impl<'a> BDDContext<'a> {
         let mut goal_added = 0;
         let mut goal_clauses = Vec::new();
         let mut goal_tops = Vec::new();
-        for goal in goals {
+        let mut invar_clauses = Vec::new();
+        let mut invar_tops = Vec::new();
+
+        for (invar, goal) in invar_goals {
             let (new_goal_clauses, added) = to_cnf_tseitsin(&self.b, goal, num_vars + added1 + added2 + added3 + goal_added);
             goal_added += added;
             let top = new_goal_clauses.last().unwrap().0.first().unwrap().clone(); // "top" variable, defining whether the bdd is true
@@ -853,7 +856,18 @@ impl<'a> BDDContext<'a> {
             // we add the necessary clauses, EXCEPT, the clause representing the root of the bdd.
             // this one we instead put in a big disjunction allowing us to finish goals as different time steps.
             goal_clauses.extend(new_goal_clauses[0..new_goal_clauses.len()-1].iter().cloned());
+
+            let (new_invar_clauses, added) = to_cnf_tseitsin(&self.b, invar, num_vars + added1 + added2 + added3 + goal_added);
+            goal_added += added;
+            let top = new_invar_clauses.last().unwrap().0.first().unwrap().clone(); // "top" variable, defining whether the bdd is true
+            invar_tops.push(top);
+            //invar_clauses.extend(new_invar_clauses.into_iter());
+            // we add the necessary clauses, EXCEPT, the clause representing the root of the bdd.
+            // this one we instead put in a big disjunction allowing us to finish invars as different time steps.
+            invar_clauses.extend(new_invar_clauses[0..new_invar_clauses.len()-1].iter().cloned());
         }
+
+        // invars
 
         println!("num aux variables {}", added1 + added2 + added3 + goal_added);
 
@@ -865,6 +879,8 @@ impl<'a> BDDContext<'a> {
             init_clauses: init_clauses,
             goal_clauses: goal_clauses,
             goal_tops: goal_tops,
+            invar_clauses: invar_clauses,
+            invar_tops: invar_tops,
         }
     }
 

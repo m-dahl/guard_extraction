@@ -68,6 +68,8 @@ pub struct SATModel {
     pub init_clauses: Vec<Clause>,
     pub goal_clauses: Vec<Clause>,
     pub goal_tops: Vec<Lit>,
+    pub invar_clauses: Vec<Clause>,
+    pub invar_tops: Vec<Lit>,
 }
 
 impl Context {
@@ -126,13 +128,16 @@ impl Context {
         }
     }
 
-    pub fn model_as_sat_model(&self, init: &Ex, goals: &[Ex]) -> SATModel {
+    pub fn model_as_sat_model(&self, init: &Ex, goals: &[(Ex,Ex)]) -> SATModel {
         let b = buddy_rs::take_manager(10000, 10000);
         let mut bc = BDDContext::from(&self, &b);
 
         let init = bc.from_expr(&init);
 
-        let goals: Vec<buddy_rs::BDD> = goals.iter().map(|g|bc.from_expr(&g)).collect();
+        let goals: Vec<(buddy_rs::BDD, buddy_rs::BDD)> = goals
+            .iter()
+            .map(|(i,g)|(bc.from_expr(&i),bc.from_expr(&g)))
+            .collect();
 
         let model = bc.model_as_satmodel(&init, &goals);
 
