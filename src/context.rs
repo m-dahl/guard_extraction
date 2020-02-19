@@ -63,6 +63,7 @@ pub struct Clause(pub Vec<Lit>);
 pub struct SATModel {
     pub num_vars: usize,
     pub model_clauses: Vec<Clause>,
+    pub global_invariants: Vec<Clause>,
     pub norm_vars: Vec<usize>,
     pub next_vars: Vec<usize>,
     pub init_clauses: Vec<Clause>,

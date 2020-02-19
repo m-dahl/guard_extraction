@@ -828,16 +828,18 @@ impl<'a> BDDContext<'a> {
             ft = self.b.or(&ft, t);
         }
         let now = std::time::Instant::now();
-        let (mut clauses, added1) = to_cnf_tseitsin(&self.b, &ft, num_vars + 0);
+        let (top_lit, mut clauses, added1) = to_cnf_tseitsin(&self.b, &ft, num_vars + 0);
+        clauses.push(Clause(vec![top_lit]));
+
         println!("num clauses for transition relation {}", clauses.len());
         println!("computed in {}ms", now.elapsed().as_millis());
 
         let rd = self.respect_domains();
-        let (rd_c, added2) = to_cnf_tseitsin(&self.b, &rd, num_vars + added1);
+        let (top_lit, mut global_invariants, added2) = to_cnf_tseitsin(&self.b, &rd, num_vars + added1);
+        global_invariants.push(Clause(vec![top_lit]));
 
-        clauses.extend(rd_c);
-
-        let (init_clauses, added3) = to_cnf_tseitsin(&self.b, &init, num_vars + added1 + added2);
+        let (top_lit, mut init_clauses, added3) = to_cnf_tseitsin(&self.b, &init, num_vars + added1 + added2);
+        init_clauses.push(Clause(vec![top_lit]));
 
         // goal(s)
         let mut goal_added = 0;
@@ -847,24 +849,24 @@ impl<'a> BDDContext<'a> {
         let mut invar_tops = Vec::new();
 
         for (invar, goal) in invar_goals {
-            let (new_goal_clauses, added) = to_cnf_tseitsin(&self.b, goal, num_vars + added1 + added2 + added3 + goal_added);
+            let (top, new_goal_clauses, added) = to_cnf_tseitsin(&self.b, goal, num_vars + added1 + added2 + added3 + goal_added);
             goal_added += added;
-            let top = new_goal_clauses.last().unwrap().0.first().unwrap().clone(); // "top" variable, defining whether the bdd is true
+            //let top = new_goal_clauses.last().unwrap().0.first().unwrap().clone(); // "top" variable, defining whether the bdd is true
             println!("TOP VAR IS: {:?}", top);
             goal_tops.push(top);
-            //goal_clauses.extend(new_goal_clauses.into_iter());
+            goal_clauses.extend(new_goal_clauses.into_iter());
             // we add the necessary clauses, EXCEPT, the clause representing the root of the bdd.
             // this one we instead put in a big disjunction allowing us to finish goals as different time steps.
-            goal_clauses.extend(new_goal_clauses[0..new_goal_clauses.len()-1].iter().cloned());
+            //goal_clauses.extend(new_goal_clauses[0..new_goal_clauses.len()-1].iter().cloned());
 
-            let (new_invar_clauses, added) = to_cnf_tseitsin(&self.b, invar, num_vars + added1 + added2 + added3 + goal_added);
+            let (top, new_invar_clauses, added) = to_cnf_tseitsin(&self.b, invar, num_vars + added1 + added2 + added3 + goal_added);
             goal_added += added;
-            let top = new_invar_clauses.last().unwrap().0.first().unwrap().clone(); // "top" variable, defining whether the bdd is true
+            // let top = new_invar_clauses.last().unwrap().0.first().unwrap().clone(); // "top" variable, defining whether the bdd is true
             invar_tops.push(top);
-            //invar_clauses.extend(new_invar_clauses.into_iter());
+            invar_clauses.extend(new_invar_clauses.into_iter());
             // we add the necessary clauses, EXCEPT, the clause representing the root of the bdd.
             // this one we instead put in a big disjunction allowing us to finish invars as different time steps.
-            invar_clauses.extend(new_invar_clauses[0..new_invar_clauses.len()-1].iter().cloned());
+            //invar_clauses.extend(new_invar_clauses[0..new_invar_clauses.len()-1].iter().cloned());
         }
 
         // invars
@@ -874,6 +876,7 @@ impl<'a> BDDContext<'a> {
         SATModel {
             num_vars: num_vars + added1 + added2 + added3 + goal_added,
             model_clauses: clauses,
+            global_invariants: global_invariants,
             norm_vars,
             next_vars,
             init_clauses: init_clauses,
@@ -1089,7 +1092,14 @@ struct Lit2 {
 #[derive(Debug, Clone, PartialEq)]
 struct Clause2(Vec<Lit2>);
 
-fn to_cnf_tseitsin(b: &BDDManager, f: &BDD, tseitsin_offset: usize) -> (Vec<Clause>, usize) {
+fn to_cnf_tseitsin(b: &BDDManager, f: &BDD, tseitsin_offset: usize) -> (Lit, Vec<Clause>, usize) {
+    // base case
+    if f == &b.zero() {
+        return (Lit { var: tseitsin_offset, neg: true }, vec![], 1)
+    } else if f == &b.one() {
+        return (Lit { var: tseitsin_offset, neg: false }, vec![], 1)
+    }
+
     // we want to generate the following clauses for each
     // node x hi low
     // x & hi -> v     => -x V -hi V v
@@ -1154,13 +1164,16 @@ fn to_cnf_tseitsin(b: &BDDManager, f: &BDD, tseitsin_offset: usize) -> (Vec<Clau
 
     rec(&b, &f, &mut clauses, &mut visited);
 
+    // these could be shared but I'm not sure it would make a difference
     let one = Clause2(vec![ Lit2 { var: 1, neg: false, new: true } ]);
     let zero = Clause2(vec![ Lit2 { var: 0, neg: true, new: true } ]);
-    let top = Clause2(vec![ Lit2 { var: f.node_index() as usize, neg: false, new: true } ]);
-
     clauses.push(one);
     clauses.push(zero);
-    clauses.push(top);
+
+    // top clause == bdd is true. we might need this separately so dont put it in the list of clauses
+    // let top = Clause2(vec![ Lit2 { var: f.node_index() as usize, neg: false, new: true } ]);
+    // dont return the top clause, we might want to just use the literal instead
+    // clauses.push(top);
 
     // rewrite into clauses where tseitsin vars are appended to the end (after "offset")
     let mut new_vars: Vec<usize> = clauses.iter().flat_map(|c| {
@@ -1172,6 +1185,10 @@ fn to_cnf_tseitsin(b: &BDDManager, f: &BDD, tseitsin_offset: usize) -> (Vec<Clau
 
     new_vars.sort();
     new_vars.dedup();
+
+    // make new top literal
+    let top_var = tseitsin_offset + new_vars.iter().position(|&x|x==f.node_index() as usize).unwrap();
+    let top_lit = Lit { var: top_var, neg: false };
 
     let num_new_vars = new_vars.len();
 
@@ -1189,7 +1206,7 @@ fn to_cnf_tseitsin(b: &BDDManager, f: &BDD, tseitsin_offset: usize) -> (Vec<Clau
         fixed_clauses.push(Clause(lits));
     }
 
-    return (fixed_clauses, num_new_vars);
+    return (top_lit, fixed_clauses, num_new_vars);
 }
 
 #[test]
@@ -1207,18 +1224,49 @@ fn test_to_cnf_tseitsin() {
     let xyz = b.and(&x, &yz);
 
 
-    let (clauses, added) = to_cnf_tseitsin(&b, &xyz, b.get_varnum() as usize);
+    let (top_lit, clauses, added) = to_cnf_tseitsin(&b, &xyz, b.get_varnum() as usize);
 
     println!("added {} new variables", added);
+    println!("top literal: {:?}", top_lit);
     clauses.iter().for_each(|c| {
         println!("clause {:?}", c);
     });
 
     let xyz2 = b.not(&xyz);
 
-    let (clauses, added) = to_cnf_tseitsin(&b, &xyz2, b.get_varnum() as usize + added);
+    let (top_lit, clauses, added) = to_cnf_tseitsin(&b, &xyz2, b.get_varnum() as usize + added);
 
     println!("added {} new variables", added);
+    println!("top literal: {:?}", top_lit);
+    clauses.iter().for_each(|c| {
+        println!("clause {:?}", c);
+    });
+
+    buddy_rs::return_manager(b);
+
+    assert!(false);
+}
+
+#[test]
+fn test_to_cnf_tseitsin_base_cases() {
+
+    let b = buddy_rs::take_manager(10000, 10000);
+
+    let one = b.one();
+
+    let (top_lit, clauses, added) = to_cnf_tseitsin(&b, &one, b.get_varnum() as usize);
+
+    println!("added {} new variables", added);
+    println!("top literal: {:?}", top_lit);
+    clauses.iter().for_each(|c| {
+        println!("clause {:?}", c);
+    });
+
+    let zero = b.zero();
+    let (top_lit, clauses, added) = to_cnf_tseitsin(&b, &zero, b.get_varnum() as usize);
+
+    println!("added {} new variables", added);
+    println!("top literal: {:?}", top_lit);
     clauses.iter().for_each(|c| {
         println!("clause {:?}", c);
     });
