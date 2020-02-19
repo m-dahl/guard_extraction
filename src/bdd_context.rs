@@ -306,21 +306,6 @@ impl<'a> BDDContext<'a> {
             bc.uc_trans(&uct.name, &uct.guard, &uct.actions);
         }
 
-        let mut ft = bc.b.zero();
-        for t in bc.transitions.values() {
-            ft = bc.b.or(&ft, t);
-        }
-        println!("ft is: {:?}", ft);
-        let mut ft2 = bc.b.zero();
-        for t in bc.disj_transitions.values() {
-
-            // let clauses = bc.clauses_from_bdd(&t.f);
-            // println!("XX clauses in single transition: {}", clauses.len());
-
-            ft2 = bc.b.or(&ft, &t.f);
-        }
-        println!("ft2 is: {:?}", ft2);
-
         bc
     }
 
@@ -753,93 +738,70 @@ impl<'a> BDDContext<'a> {
         c
     }
 
-    // fn clauses_from_bdd(&self, f: &BDD) -> Vec<Clause> {
-    //     // negate the relation to build our clauses
-    //     let f = self.b.not(&f);
+    // exponential time and size!
+    fn clauses_from_bdd(&self, f: &BDD) -> Vec<Clause> {
+        // negate the relation to build our clauses
+        let f = self.b.not(&f);
 
-    //     let now = std::time::Instant::now();
-    //     let cubes = self.b.allsat_vec(&f);
-    //     println!("allsat computed in {}ms", now.elapsed().as_millis());
+        let now = std::time::Instant::now();
+        let cubes = self.b.allsat_vec(&f);
+        println!("allsat computed in {}ms", now.elapsed().as_millis());
 
-    //     let mut clauses = Vec::new();
-    //     let cubes: Vec<_> = cubes.into_iter().map(|c| { Cube(c) }).collect();
-    //     let cubes = CubeList::new().merge(&CubeList::from_list(&cubes));
+        let mut clauses = Vec::new();
+        let cubes: Vec<_> = cubes.into_iter().map(|c| { Cube(c) }).collect();
+        let cubes = CubeList::new().merge(&CubeList::from_list(&cubes));
 
-    //     for cube in cubes.cubes() {
-    //         let mut lits = Vec::new();
-    //         for v in &cube.0 {
-    //             let v = match v {
-    //                 // negate the values again here to go from dnf to cnf
-    //                 Valuation::False    => 1, // true
-    //                 Valuation::True     => 0, // false
-    //                 Valuation::DontCare => 2, // dc
-    //             };
-    //             lits.push(v);
-    //         }
-    //         clauses.push(Clause { lits });
-    //     }
+        for cube in cubes.cubes() {
+            let mut lits = Vec::new();
+            for (i,v) in cube.0.iter().enumerate() {
+                match v {
+                    // negate the values again here to go from dnf to cnf
+                    Valuation::False    => lits.push(Lit { var: i, neg: false}), // true
+                    Valuation::True     => lits.push(Lit { var: i, neg: true}), // false
+                    Valuation::DontCare => {}, // dontcare
+                };
+            }
+            clauses.push(Clause(lits));
+        }
 
-    //     clauses
-    // }
-
-    // pub fn model_as_satmodel(&self, init: &BDD, goal: &BDD) -> SATModel {
-    //     let norm_vars: Vec<usize> = self.b.scan_set(&self.normal_vars).iter().map(|a|*a as usize).collect();
-    //     let next_vars: Vec<usize> = self.b.scan_set(&self.next_vars).iter().map(|a|*a as usize).collect();
-
-    //     let mut ft = self.b.zero();
-    //     for t in self.transitions.values() {
-    //         let now = std::time::Instant::now();
-    //         let clauses = self.clauses_from_bdd(&t);
-    //         println!("clauses in single transition: {}", clauses.len());
-    //         println!("computed in {}ms", now.elapsed().as_millis());
-    //         ft = self.b.or(&ft, t);
-    //     }
-    //     let now = std::time::Instant::now();
-    //     let mut clauses = self.clauses_from_bdd(&ft);
-    //     println!("num clauses for transition relation {}", clauses.len());
-    //     println!("computed in {}ms", now.elapsed().as_millis());
-
-    //     let rd = self.respect_domains();
-    //     let rd_c = self.clauses_from_bdd(&rd);
-
-    //     clauses.extend(rd_c);
-
-    //     let init_clauses = self.clauses_from_bdd(&init);
-    //     let goal_clauses = self.clauses_from_bdd(&goal);
-
-
-    //     SATModel {
-    //         num_vars: norm_vars.len() + next_vars.len(),
-    //         model_clauses: clauses,
-    //         norm_vars,
-    //         next_vars,
-    //         init: init_clauses,
-    //         goal: goal_clauses,
-    //     }
-    // }
+        clauses
+    }
 
     pub fn model_as_satmodel(&self, init: &BDD, invar_goals: &[(BDD,BDD)]) -> SATModel {
         let norm_vars: Vec<usize> = self.b.scan_set(&self.normal_vars).iter().map(|a|*a as usize).collect();
         let next_vars: Vec<usize> = self.b.scan_set(&self.next_vars).iter().map(|a|*a as usize).collect();
-        let num_vars = norm_vars.len() + next_vars.len();
+        let num_vars = norm_vars.len() + next_vars.len() + self.transitions.len();
 
-        // encode the transition relation using one literal per
-        // transition + a bunch of supporting clauses. the literal is
-        // used to know which transition we fired
+
+        // add an extra var for each transition that is only used to track it...
+        let var_num = self.b.get_varnum();
+        // add some more
+        self.b.set_varnum(var_num+self.transitions.len() as i32);
+
         let now = std::time::Instant::now();
-        let mut trans_added = 0;
-        let mut trans_clauses: Vec<Clause> = Vec::new();
         let mut trans_map = HashMap::new();
-        for (name, t) in &self.transitions {
-            let (top_lit, clauses, added) = to_cnf_tseitsin(&self.b, &t, num_vars + trans_added);
-            trans_added += added;
-            trans_clauses.extend(clauses.into_iter());
-            trans_map.insert(name.clone(), top_lit);
+
+        let mut ft = self.b.zero();
+        for (i, (name, t)) in self.transitions.iter().enumerate() {
+            let others: Vec<usize> = (0..self.transitions.len()).filter(|a| a != &i).collect();
+            let mut zero = self.b.one();
+            for k in others {
+                let other = self.b.nithvar(k as i32 + var_num);
+                zero = self.b.and(&zero, &other);
+            }
+            let var_index = var_num + i as i32;
+            let ith = self.b.ithvar(var_index);
+            let t = self.b.and(&t, &ith);
+            let t = self.b.and(&t, &zero);
+            trans_map.insert(name.clone(), var_index);
+            ft = self.b.or(&ft, &t);
         }
+
+        let (top_lit, mut trans_clauses, added1) = to_cnf_tseitsin(&self.b, &ft, num_vars);
+        trans_clauses.push(Clause(vec![top_lit]));
+
         println!("num clauses for transition relation {}", trans_clauses.len());
         println!("computed in {}ms", now.elapsed().as_millis());
-
-        let added1 = trans_added;
 
         let rd = self.respect_domains();
         let (top_lit, mut global_invariants, added2) = to_cnf_tseitsin(&self.b, &rd, num_vars + added1);
@@ -856,37 +818,28 @@ impl<'a> BDDContext<'a> {
         let mut invar_tops = Vec::new();
 
         for (invar, goal) in invar_goals {
-            let (top, new_goal_clauses, added) = to_cnf_tseitsin(&self.b, goal, num_vars + added1 + added2 + added3 + goal_added);
+            let (top, new_goal_clauses, added) =
+                to_cnf_tseitsin(&self.b, goal, num_vars + added1 + added2 + added3 + goal_added);
             goal_added += added;
-            //let top = new_goal_clauses.last().unwrap().0.first().unwrap().clone(); // "top" variable, defining whether the bdd is true
-            println!("TOP VAR IS: {:?}", top);
             goal_tops.push(top);
             goal_clauses.extend(new_goal_clauses.into_iter());
-            // we add the necessary clauses, EXCEPT, the clause representing the root of the bdd.
-            // this one we instead put in a big disjunction allowing us to finish goals as different time steps.
-            //goal_clauses.extend(new_goal_clauses[0..new_goal_clauses.len()-1].iter().cloned());
 
-            let (top, new_invar_clauses, added) = to_cnf_tseitsin(&self.b, invar, num_vars + added1 + added2 + added3 + goal_added);
+            let (top, new_invar_clauses, added) =
+                to_cnf_tseitsin(&self.b, invar, num_vars + added1 + added2 + added3 + goal_added);
             goal_added += added;
-            // let top = new_invar_clauses.last().unwrap().0.first().unwrap().clone(); // "top" variable, defining whether the bdd is true
             invar_tops.push(top);
             invar_clauses.extend(new_invar_clauses.into_iter());
-            // we add the necessary clauses, EXCEPT, the clause representing the root of the bdd.
-            // this one we instead put in a big disjunction allowing us to finish invars as different time steps.
-            //invar_clauses.extend(new_invar_clauses[0..new_invar_clauses.len()-1].iter().cloned());
         }
-
-        // invars
 
         println!("num aux variables {}", added1 + added2 + added3 + goal_added);
 
         SATModel {
-            num_vars: num_vars + added1 + added2 + added3 + goal_added,
-            trans_map: trans_map,
+            num_aux_vars: added1 + added2 + added3 + goal_added,
+            trans_map: trans_map, // name -> variable id
             trans_clauses: trans_clauses,
             global_invariants: global_invariants,
-            norm_vars,
-            next_vars,
+            norm_vars, // variable id
+            next_vars, // variable id
             init_clauses: init_clauses,
             goal_clauses: goal_clauses,
             goal_tops: goal_tops,
