@@ -62,7 +62,8 @@ pub struct Clause(pub Vec<Lit>);
 #[derive(Debug, Clone, PartialEq)]
 pub struct SATModel {
     pub num_vars: usize,
-    pub model_clauses: Vec<Clause>,
+    pub trans_map: HashMap<String, Lit>,
+    pub trans_clauses: Vec<Clause>,
     pub global_invariants: Vec<Clause>,
     pub norm_vars: Vec<usize>,
     pub next_vars: Vec<usize>,

@@ -823,16 +823,23 @@ impl<'a> BDDContext<'a> {
         let next_vars: Vec<usize> = self.b.scan_set(&self.next_vars).iter().map(|a|*a as usize).collect();
         let num_vars = norm_vars.len() + next_vars.len();
 
-        let mut ft = self.b.zero();
-        for t in self.transitions.values() {
-            ft = self.b.or(&ft, t);
-        }
+        // encode the transition relation using one literal per
+        // transition + a bunch of supporting clauses. the literal is
+        // used to know which transition we fired
         let now = std::time::Instant::now();
-        let (top_lit, mut clauses, added1) = to_cnf_tseitsin(&self.b, &ft, num_vars + 0);
-        clauses.push(Clause(vec![top_lit]));
-
-        println!("num clauses for transition relation {}", clauses.len());
+        let mut trans_added = 0;
+        let mut trans_clauses: Vec<Clause> = Vec::new();
+        let mut trans_map = HashMap::new();
+        for (name, t) in &self.transitions {
+            let (top_lit, clauses, added) = to_cnf_tseitsin(&self.b, &t, num_vars + trans_added);
+            trans_added += added;
+            trans_clauses.extend(clauses.into_iter());
+            trans_map.insert(name.clone(), top_lit);
+        }
+        println!("num clauses for transition relation {}", trans_clauses.len());
         println!("computed in {}ms", now.elapsed().as_millis());
+
+        let added1 = trans_added;
 
         let rd = self.respect_domains();
         let (top_lit, mut global_invariants, added2) = to_cnf_tseitsin(&self.b, &rd, num_vars + added1);
@@ -875,7 +882,8 @@ impl<'a> BDDContext<'a> {
 
         SATModel {
             num_vars: num_vars + added1 + added2 + added3 + goal_added,
-            model_clauses: clauses,
+            trans_map: trans_map,
+            trans_clauses: trans_clauses,
             global_invariants: global_invariants,
             norm_vars,
             next_vars,
