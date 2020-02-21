@@ -258,7 +258,7 @@ impl<'a> BDDContext<'a> {
                 }
             }
         }
-        println!("used bdd variables: {}", b.get_varnum());
+        // println!("used bdd variables: {}", b.get_varnum());
 
         let pairing: Vec<_> = normal_vars.iter().zip(next_vars.iter())
             .map(|(x, y)| (*x as i32, *y as i32)).collect();
@@ -846,6 +846,43 @@ impl<'a> BDDContext<'a> {
             invar_clauses: invar_clauses,
             invar_tops: invar_tops,
         }
+    }
+
+    pub fn sat_result_to_values(&self, clause: &Clause) -> Vec<Value> {
+        let mut result = Vec::new();
+
+        for v in &self.vars {
+            let res = match &v.var_type {
+                BDDVarType::Bool => {
+                    let cv = clause.0.iter().find(|l| l.var as i32 == v.bdd_var_id).unwrap();
+                    if cv.neg {
+                        Value::Bool(false)
+                    } else {
+                        Value::Bool(true)
+                    }
+                },
+                BDDVarType::Enum(dom) => {
+                    let mut d = self.b.one();
+                    for i in 0 .. dom.binsize {
+                        let cv = clause.0.iter().find(|l| l.var as i32 == v.bdd_var_id + i).unwrap();
+                        if cv.neg {
+                            let t = self.b.nithvar(v.bdd_var_id+i as i32);
+                            d = self.b.and(&d, &t);
+                        } else {
+                            let t = self.b.ithvar(v.bdd_var_id+i as i32);
+                            d = self.b.and(&d, &t);
+                        }
+                    }
+
+                    let d = dom.allowed_values(&self.b, &d);
+
+                    assert!(d.len() == 1);
+                    Value::InDomain(d[0] as usize)
+                }
+            };
+            result.push(res);
+        }
+        result
     }
 
     pub fn controllable(&self, initial: &BDD, forbidden: &BDD) -> (BDD, BDD, BDD) {

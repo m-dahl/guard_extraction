@@ -148,6 +148,17 @@ impl Context {
         model
     }
 
+    pub fn sat_result_to_values(&self, clause: &Clause) -> Vec<Value> {
+        let b = buddy_rs::take_manager(10000, 10000);
+        let bc = BDDContext::from(&self, &b);
+
+        let values = bc.sat_result_to_values(clause);
+
+        drop(bc);
+        buddy_rs::return_manager(b);
+        values
+    }
+
     pub fn compute_guards(&self, initial: &Ex, forbidden: &Ex) -> (HashMap<String, Ex>, Ex) {
         let b = buddy_rs::take_manager(10000, 10000);
         let mut bc = BDDContext::from(&self, &b);
