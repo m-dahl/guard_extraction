@@ -130,7 +130,7 @@ impl Context {
         }
     }
 
-    pub fn model_as_sat_model(&self, init: &Ex, goals: &[(Ex,Ex)]) -> SATModel {
+    pub fn model_as_sat_model(&self, init: &Ex, goals: &[(Ex,Ex)], invariants: &[Ex]) -> SATModel {
         let b = buddy_rs::take_manager(10000, 10000);
         let mut bc = BDDContext::from(&self, &b);
 
@@ -141,7 +141,12 @@ impl Context {
             .map(|(i,g)|(bc.from_expr(&i),bc.from_expr(&g)))
             .collect();
 
-        let model = bc.model_as_satmodel(&init, &goals);
+        let invariants: Vec<buddy_rs::BDD> = invariants
+            .iter()
+            .map(|i|bc.from_expr(&i))
+            .collect();
+
+        let model = bc.model_as_satmodel(&init, &goals, &invariants);
 
         drop(bc);
         buddy_rs::return_manager(b);

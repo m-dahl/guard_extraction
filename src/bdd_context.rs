@@ -767,7 +767,7 @@ impl<'a> BDDContext<'a> {
         clauses
     }
 
-    pub fn model_as_satmodel(&self, init: &BDD, invar_goals: &[(BDD,BDD)]) -> SATModel {
+    pub fn model_as_satmodel(&self, init: &BDD, invar_goals: &[(BDD,BDD)], invariants: &[BDD]) -> SATModel {
         let norm_vars: Vec<usize> = self.b.scan_set(&self.normal_vars).iter().map(|a|*a as usize).collect();
         let next_vars: Vec<usize> = self.b.scan_set(&self.next_vars).iter().map(|a|*a as usize).collect();
         let num_vars = norm_vars.len() + next_vars.len() + self.transitions.len();
@@ -804,8 +804,15 @@ impl<'a> BDDContext<'a> {
         println!("computed in {}ms", now.elapsed().as_millis());
 
         let rd = self.respect_domains();
-        let (top_lit, mut global_invariants, added2) = to_cnf_tseitsin(&self.b, &rd, num_vars + added1);
+        let (top_lit, mut global_invariants, mut added2) = to_cnf_tseitsin(&self.b, &rd, num_vars + added1);
         global_invariants.push(Clause(vec![top_lit]));
+
+        for i in invariants {
+            let (top_lit, clauses, added) = to_cnf_tseitsin(&self.b, i, num_vars + added1 + added2);
+            global_invariants.extend(clauses.into_iter());
+            global_invariants.push(Clause(vec![top_lit]));
+            added2 += added;
+        }
 
         let (top_lit, mut init_clauses, added3) = to_cnf_tseitsin(&self.b, &init, num_vars + added1 + added2);
         init_clauses.push(Clause(vec![top_lit]));
@@ -1093,9 +1100,13 @@ struct Clause2(Vec<Lit2>);
 fn to_cnf_tseitsin(b: &BDDManager, f: &BDD, tseitsin_offset: usize) -> (Lit, Vec<Clause>, usize) {
     // base case
     if f == &b.zero() {
-        return (Lit { var: tseitsin_offset, neg: true }, vec![], 1)
+        return (Lit { var: tseitsin_offset, neg: false },
+                vec![Clause(vec!(Lit { var: tseitsin_offset, neg: false })),
+                     Clause(vec!(Lit { var: tseitsin_offset, neg: true }))], 1)
     } else if f == &b.one() {
-        return (Lit { var: tseitsin_offset, neg: false }, vec![], 1)
+        return (Lit { var: tseitsin_offset, neg: false },
+                vec![Clause(vec!(Lit { var: tseitsin_offset, neg: false },
+                                 Lit { var: tseitsin_offset, neg: true }))], 1)
     }
 
     // we want to generate the following clauses for each

@@ -7,6 +7,5 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-#buddy-rs = { git = "https://github.com/m-dahl/buddy-rs" }
-buddy-rs = { path = "../buddy-sys/buddy-rs" }
+buddy-rs = { git = "https://github.com/m-dahl/buddy-rs" }
 itertools = "0.8.1"
