@@ -512,6 +512,10 @@ impl<'a> BDDContext<'a> {
             ExprType::DNF => f.clone(),
             ExprType::CNF => self.b.not(&f),
         };
+
+        // simplify out domain respecting before creating the expression
+        let f = self.b.simplify(&f, &self.respect_domains());
+
         let cubes = self.b.allsat_vec(&f);
         let cubes: Vec<_> = cubes.into_iter().map(|c| { Cube(c) }).collect();
         let cubes = CubeList::new().merge(&CubeList::from_list(&cubes));
@@ -734,7 +738,8 @@ impl<'a> BDDContext<'a> {
 
         let c = ctrl(&self.b, &forbidden, &ub, &self.normal_vars, &self.next_to_normal);
         let sat = self.b.satcount_set(&c, &self.normal_vars);
-        println!("Numer of forbidden: {}\n", sat);
+        println!("Number of forbidden: {}\n", sat);
+
         c
     }
 
@@ -971,7 +976,6 @@ impl<'a> BDDContext<'a> {
 
         new_guards.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }
-
 
     fn compute_guard(
         &self,
