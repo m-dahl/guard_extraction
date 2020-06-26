@@ -743,6 +743,20 @@ impl<'a> BDDContext<'a> {
         c
     }
 
+    pub fn extend_forward(&self, pred: &BDD) -> BDD {
+        let mut fu = self.b.zero();
+        for t in self.uc_transitions.values() {
+            fu = self.b.or(&fu, t);
+        }
+        // make sure forbidden and initial states take the variable domains into account.
+        let rd = self.respect_domains();
+        let pred = self.b.and(&pred, &rd);
+
+        // forward reachability
+        reach(&self.b, &pred, &fu, &self.normal_vars, &self.next_to_normal)
+    }
+
+
     // exponential time and size!
     fn clauses_from_bdd(&self, f: &BDD) -> Vec<Clause> {
         // negate the relation to build our clauses

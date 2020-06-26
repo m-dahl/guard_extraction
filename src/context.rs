@@ -213,4 +213,35 @@ impl Context {
 
         new_forbidden
     }
+
+    pub fn extend_forward(&self, pred: &Ex) -> Ex {
+        let b = buddy_rs::take_manager(10000, 10000);
+        let mut bc = BDDContext::from(&self, &b);
+
+        let pred = bc.from_expr(&pred);
+
+        let new_pred = bc.extend_forward(&pred);
+        let new_pred = bc.to_expr(&new_pred, ExprType::DNF);
+
+        // must drop the context first to release the sets and pairs
+        drop(bc);
+        buddy_rs::return_manager(b);
+
+        new_pred
+    }
+
+    /// go to bdd and back to simplify the expression
+    pub fn cycle_expression(&self, ex: &Ex) -> Ex {
+        let b = buddy_rs::take_manager(10000, 10000);
+        let mut bc = BDDContext::from(&self, &b);
+
+        let e = bc.from_expr(&ex);
+        let dnf = bc.to_expr(&e, ExprType::DNF);
+
+        // must drop the context first to release the sets and pairs
+        drop(bc);
+        buddy_rs::return_manager(b);
+
+        dnf
+    }
 }
