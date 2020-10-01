@@ -8,4 +8,5 @@ edition = "2018"
 
 [dependencies]
 buddy-rs = { git = "https://github.com/m-dahl/buddy-rs" }
+espresso-rs = { git = "https://github.com/m-dahl/espresso-rs" }
 itertools = "0.8.1"

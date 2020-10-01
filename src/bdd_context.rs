@@ -5,13 +5,55 @@ use itertools::Itertools;
 use buddy_rs::*;
 
 use crate::bdd_domain::*;
-use crate::cubes::*;
 use crate::context::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprType {
     DNF,
     CNF,
+}
+
+// espresso algorithm
+fn make_espresso_problem(cubes: &Vec<Vec<Valuation>>) -> String {
+    let i = cubes[0].len();
+    let mut lines = String::new();
+    lines.push_str(&format!(".i {}\n", i));
+    lines.push_str(".o 1\n");
+    lines.push_str(".type f\n");
+    for c in cubes {
+        let mut l = String::new();
+        for x in c {
+            match x {
+                Valuation::False => l.push('0'),
+                Valuation::True => l.push('1'),
+                Valuation::DontCare => l.push('-'),
+            }
+        }
+        lines.push_str(&format!("{} 1\n", l));
+    }
+    lines.push_str(".e\n");
+    lines
+}
+
+fn parse_espresso_result(res: &str) -> Vec<Vec<Valuation>> {
+    let rlines: Vec<_> = res.lines().collect();
+    let slice = &rlines[3 .. rlines.len()-1];
+    let mut cubes = vec![];
+    for s in slice {
+        let mut new_cube = Vec::new();
+        for x in s.as_bytes().iter() {
+            let v = match x {
+                b'0' => Valuation::False,
+                b'1' => Valuation::True,
+                b'-' => Valuation::DontCare,
+                b' ' => break,
+                _ => panic!("unexpected char {:?}", s),
+            };
+            new_cube.push(v);
+        }
+        cubes.push(new_cube);
+    }
+    cubes
 }
 
 // compute reachable states
@@ -192,6 +234,7 @@ enum DomainCubeVal {
 
 struct Ts {
     f: BDD,
+    #[allow(dead_code)]
     var: usize,
     vars: BDD,
     next_to_normal: BDDPair,
@@ -517,18 +560,26 @@ impl<'a> BDDContext<'a> {
         let f = self.b.simplify(&f, &self.respect_domains());
 
         let cubes = self.b.allsat_vec(&f);
-        let cubes: Vec<_> = cubes.into_iter().map(|c| { Cube(c) }).collect();
-        let cubes = CubeList::new().merge(&CubeList::from_list(&cubes));
+
+        let lines = make_espresso_problem(&cubes);
+        let r = if lines.len() > 1000 {
+            let new_lines = espresso_rs::d1merge(&lines);
+            espresso_rs::espresso(&new_lines)
+        } else {
+            espresso_rs::espresso(&lines)
+        };
+
+        let cubes = parse_espresso_result(&r);
 
         let mut domain_cubes = Vec::new();
 
-        for cube in cubes.cubes() {
+        for cube in &cubes {
             let mut new_cube = Vec::new();
             for v in &self.vars {
 
                 let res = match &v.var_type {
                     BDDVarType::Bool => {
-                        match (&cube.0[v.bdd_var_id as usize], &t) {
+                        match (&cube[v.bdd_var_id as usize], &t) {
                             (Valuation::False, ExprType::DNF) => DomainCubeVal::Bool(false),
                             (Valuation::False, ExprType::CNF) => DomainCubeVal::Bool(true),
 
@@ -539,7 +590,7 @@ impl<'a> BDDContext<'a> {
                         }
                     },
                     BDDVarType::Enum(dom) => {
-                        let slice = &cube.0[(v.bdd_var_id) as usize ..(v.bdd_var_id+dom.binsize) as usize];
+                        let slice = &cube[(v.bdd_var_id) as usize ..(v.bdd_var_id+dom.binsize) as usize];
                         if slice.iter().all(|v| v == &Valuation::DontCare) {
                             DomainCubeVal::DontCare
                         } else {
@@ -669,7 +720,7 @@ impl<'a> BDDContext<'a> {
         self.transitions.insert(name.into(), f);
     }
 
-    fn trans2(&mut self, name: &str, guard: &Ex, actions: &[Ac]) {
+    fn trans2(&mut self, _name: &str, guard: &Ex, actions: &[Ac]) {
         let g = self.from_expr(guard);
         for a in actions {
             let (action_bdd,_f) = self.from_ac(&a);
@@ -758,6 +809,7 @@ impl<'a> BDDContext<'a> {
 
 
     // exponential time and size!
+    #[allow(dead_code)]
     fn clauses_from_bdd(&self, f: &BDD) -> Vec<Clause> {
         // negate the relation to build our clauses
         let f = self.b.not(&f);
@@ -767,12 +819,20 @@ impl<'a> BDDContext<'a> {
         println!("allsat computed in {}ms", now.elapsed().as_millis());
 
         let mut clauses = Vec::new();
-        let cubes: Vec<_> = cubes.into_iter().map(|c| { Cube(c) }).collect();
-        let cubes = CubeList::new().merge(&CubeList::from_list(&cubes));
 
-        for cube in cubes.cubes() {
+        let lines = make_espresso_problem(&cubes);
+        let r = if lines.len() > 1000 {
+            let new_lines = espresso_rs::d1merge(&lines);
+            espresso_rs::espresso(&new_lines)
+        } else {
+            espresso_rs::espresso(&lines)
+        };
+
+        let cubes = parse_espresso_result(&r);
+
+        for cube in &cubes {
             let mut lits = Vec::new();
-            for (i,v) in cube.0.iter().enumerate() {
+            for (i,v) in cube.iter().enumerate() {
                 match v {
                     // negate the values again here to go from dnf to cnf
                     Valuation::False    => lits.push(Lit { var: i, neg: false}), // true
