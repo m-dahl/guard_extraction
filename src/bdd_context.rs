@@ -787,11 +787,7 @@ impl<'a> BDDContext<'a> {
         let rd = self.respect_domains();
         let forbidden = self.b.and(&forbidden, &rd);
 
-        let c = ctrl(&self.b, &forbidden, &ub, &self.normal_vars, &self.next_to_normal);
-        let sat = self.b.satcount_set(&c, &self.normal_vars);
-        println!("Number of forbidden: {}\n", sat);
-
-        c
+        ctrl(&self.b, &forbidden, &ub, &self.normal_vars, &self.next_to_normal)
     }
 
     pub fn extend_forward(&self, pred: &BDD) -> BDD {

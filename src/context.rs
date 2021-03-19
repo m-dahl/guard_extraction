@@ -200,7 +200,10 @@ impl Context {
 
     pub fn extend_forbidden(&self, forbidden: &Ex) -> Ex {
         let b = buddy_rs::take_manager(10000, 10000);
+        b.unset_gc_cb(); // silence stdout
         let mut bc = BDDContext::from(&self, &b);
+        b.auto_reorder(2);
+        b.varblockall();
 
         let forbidden = bc.from_expr(&forbidden);
 
@@ -216,8 +219,8 @@ impl Context {
 
     pub fn extend_forward(&self, pred: &Ex) -> Ex {
         let b = buddy_rs::take_manager(10000, 10000);
+        b.unset_gc_cb(); // silence stdout
         let mut bc = BDDContext::from(&self, &b);
-
         let pred = bc.from_expr(&pred);
 
         let new_pred = bc.extend_forward(&pred);
@@ -233,6 +236,7 @@ impl Context {
     /// go to bdd and back to simplify the expression
     pub fn cycle_expression(&self, ex: &Ex) -> Ex {
         let b = buddy_rs::take_manager(10000, 10000);
+        b.unset_gc_cb(); // silence stdout
         let mut bc = BDDContext::from(&self, &b);
 
         let e = bc.from_expr(&ex);
